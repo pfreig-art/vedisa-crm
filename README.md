@@ -276,3 +276,40 @@ Invoke-RestMethod -Uri http://localhost:8000/ai/metrics `
 Invoke-RestMethod -Uri http://localhost:8000/ai/audit `
   -Headers @{Authorization="Bearer $token"}
 ```
+
+## Roadmap
+
+### Fase 1 — Core CRM (completado ✅)
+- [x] Modelos SQLModel: Solicitud, Contacto, Actuacion, Etapa
+- [x] Auth JWT + roles (admin / comercial)
+- [x] Endpoints CRUD solicitudes con paginación server-side
+- [x] Endpoint pipeline Kanban
+- [x] TanStack Table v8 (server-side) en frontend
+- [x] PipelineBoard drag & drop (@hello-pangea/dnd)
+- [x] AppShell con sidebar + routing React
+
+### Fase 2 — IA Contextual (completado ✅)
+- [x] Abstracción multi-proveedor LLM (OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter)
+- [x] AIContextBundle: carga contexto de solicitud desde BBDD
+- [x] Prompt versionado (prompt_service.py)
+- [x] Drawer IA contextual en frontend
+- [x] Modelo AIAuditLog + servicio ai_audit.py
+- [x] Endpoints /ai/audit y /ai/metrics
+- [x] OpenTelemetry básico + tabla audit
+
+### Fase 3 — Productización (pendiente 🔜)
+- [ ] Dashboard KPIs (conversión, tiempo medio, forecast)
+- [ ] Notificaciones en tiempo real (WebSocket o SSE)
+- [ ] Exportación PDF / Excel de solicitudes
+- [ ] Tests E2E (Playwright)
+- [ ] Docker Compose producción (backend + frontend + postgres)
+- [ ] CI/CD GitHub Actions
+- [ ] Documentación OpenAPI exportada
+
+### Fase 4 — Escala (futuro 🔭)
+- [ ] Multi-tenant (organizaciones aisladas)
+- [ ] Rate limiting y cuotas por proveedor LLM
+- [ ] Caché semántica de respuestas IA (Redis)
+- [ ] Fine-tuning de prompts por vertical de negocio
+- [ ] SDK cliente TypeScript autogenerado (openapi-typescript)
+
