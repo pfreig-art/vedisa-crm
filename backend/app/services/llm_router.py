@@ -6,6 +6,7 @@ Flujo:
   3. Registra latencia, tokens y proveedor en cada intento
   4. Devuelve LLMResponse normalizado independiente del proveedor
 """
+import os
 import time
 import asyncio
 import structlog
@@ -13,27 +14,50 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 from app.core.config import settings
 from app.providers.base import LLMProvider, LLMRequest, LLMResponse
-from app.providers.openai_provider import OpenAIProvider
-from app.providers.anthropic_provider import AnthropicProvider
-from app.providers.gemini_provider import GeminiProvider
-from app.providers.deepseek_provider import DeepSeekProvider
-from app.providers.gateway_provider import GatewayProvider
 
 log = structlog.get_logger()
+
+
+def _try_load_provider(name: str, factory):
+    """Intenta instanciar un provider; si falla (key ausente u otro error) lo omite."""
+    try:
+        p = factory()
+        log.info("llm_provider_loaded", provider=name)
+        return p
+    except Exception as e:
+        log.warning("llm_provider_skipped", provider=name, reason=str(e))
+        return None
 
 
 class LLMRouterService:
     """Router multi-proveedor con fallback automatico."""
 
     def __init__(self):
-        self._providers: dict[str, LLMProvider] = {
-            "openai": OpenAIProvider(),
-            "anthropic": AnthropicProvider(),
-            "gemini": GeminiProvider(),
-            "deepseek": DeepSeekProvider(),
-            "openrouter": GatewayProvider(name="openrouter"),
-            "litellm": GatewayProvider(name="litellm"),
+        # Importaciones locales para evitar errores de importacion al nivel de modulo
+        from app.providers.openai_provider import OpenAIProvider
+        from app.providers.anthropic_provider import AnthropicProvider
+        from app.providers.gemini_provider import GeminiProvider
+        from app.providers.deepseek_provider import DeepSeekProvider
+        from app.providers.gateway_provider import GatewayProvider
+
+        candidates = {
+            "openai":     lambda: OpenAIProvider(),
+            "anthropic":  lambda: AnthropicProvider(),
+            "gemini":     lambda: GeminiProvider(),
+            "deepseek":   lambda: DeepSeekProvider(),
+            "openrouter": lambda: GatewayProvider(name="openrouter"),
+            "litellm":    lambda: GatewayProvider(name="litellm"),
         }
+
+        # Solo registra los proveedores que arrancan sin error
+        self._providers: dict[str, LLMProvider] = {}
+        for name, factory in candidates.items():
+            provider = _try_load_provider(name, factory)
+            if provider is not None:
+                self._providers[name] = provider
+
+        if not self._providers:
+            log.warning("llm_no_providers_available", msg="Ninguna API key configurada. El chat IA no estara disponible.")
 
     def available_providers(self) -> list[dict]:
         """Lista de proveedores con su estado de disponibilidad."""
@@ -57,7 +81,12 @@ class LLMRouterService:
         primary_name = provider_name or settings.LLM_PRIMARY_PROVIDER
         fallback_name = settings.LLM_FALLBACK_PROVIDER
 
+        # Si el primario pedido no esta disponible, buscar cualquiera disponible
         provider = self._get_provider(primary_name)
+        if not provider and self._providers:
+            primary_name = next(iter(self._providers))
+            provider = self._get_provider(primary_name)
+
         if provider:
             try:
                 return await asyncio.wait_for(
@@ -81,30 +110,21 @@ class LLMRouterService:
             )
 
         raise RuntimeError(
-            f"Ningún proveedor disponible. Primary={primary_name}, Fallback={fallback_name}"
+            "No hay proveedores LLM disponibles. Configura al menos una API key en el .env."
         )
 
     async def test_provider(self, name: str) -> dict:
-        """Test de conectividad para un proveedor concreto."""
+        """Prueba un proveedor especifico con un prompt minimo."""
         provider = self._providers.get(name)
         if not provider:
-            return {"name": name, "status": "not_found"}
-        if not provider.is_available:
-            return {"name": name, "status": "no_api_key"}
+            return {"provider": name, "status": "not_configured", "error": "Provider no cargado"}
         try:
-            from app.providers.base import LLMMessage, LLMIntent
-            test_req = LLMRequest(
-                messages=[LLMMessage(role="user", content="ping")],
-                intent=LLMIntent.GENERAL,
-                max_tokens=10,
-            )
-            start = time.monotonic()
-            resp = await asyncio.wait_for(provider.generate(test_req), timeout=15)
-            latency = int((time.monotonic() - start) * 1000)
-            return {"name": name, "status": "ok", "latency_ms": latency, "model": resp.model}
+            req = LLMRequest(messages=[{"role": "user", "content": "di: ok"}])
+            resp = await asyncio.wait_for(provider.generate(req), timeout=15)
+            return {"provider": name, "status": "ok", "model": resp.model, "latency_ms": resp.latency_ms}
         except Exception as e:
-            return {"name": name, "status": "error", "error": str(e)}
+            return {"provider": name, "status": "error", "error": str(e)}
 
 
-# Singleton
+# Singleton global
 llm_router = LLMRouterService()
