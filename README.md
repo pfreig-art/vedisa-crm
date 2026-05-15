@@ -196,13 +196,13 @@ npm run dev
 ## Roadmap piloto
 
 - [x] Repositorio base y estructura
-- [ ] Modelos OLTP PostgreSQL + Alembic
-- [ ] Endpoints CRM (solicitudes, pipeline, dashboard)
-- [ ] Abstracción LLM multi-proveedor
-- [ ] Endpoints IA (analyze, context)
+- [x] Modelos OLTP PostgreSQL (SQLModel: Usuario, Solicitud)
+- [x] Auth JWT + roles (login, /me, register admin-only)
+- [x] Endpoints CRM (solicitudes, pipeline, dashboard) con PostgreSQL real
+- [x] Abstraccion LLM multi-proveedor (OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, LiteLLM)
+- [x] Endpoints IA (analyze/solicitud, chat, test, health, providers)
 - [ ] Frontend: AppShell + Sidebar + FilterBar
 - [ ] Frontend: TanStack Table server-side (SolicitudesPage)
 - [ ] Frontend: Kanban Pipeline (PipelineBoard)
 - [ ] Frontend: Drawer IA contextual (AIDrawer)
-- [ ] Auth JWT + roles
-- [ ] Observabilidad IA (audit log, métricas por proveedor)
+- [ ] Observabilidad IA (audit log, metricas por proveedor)
