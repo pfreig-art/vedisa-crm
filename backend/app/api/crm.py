@@ -6,7 +6,6 @@ from datetime import datetime
 
 router = APIRouter()
 
-
 # ---- Schemas read models -----------------------------------------
 
 class ContactoRef(BaseModel):
@@ -138,16 +137,17 @@ async def update_estado(
 
 @router.get("/dashboard")
 async def get_dashboard():
-    """Snapshot de KPIs para el dashboard CRM."""
+    """Snapshot de KPIs del CRM de solicitudes."""
+    # TODO: reemplazar con queries reales a PostgreSQL
     return {
-        "total_activas": 0,
-        "total_adjudicadas": 0,
-        "volumen_ofertado": 0.0,
-        "volumen_adjudicado": 0.0,
-        "win_rate": 0.0,
-        "aging_medio_dias": 0,
-        "por_estado": {},
-        "por_comercial": [],
+        "total_solicitudes": 0,
+        "en_estudio": 0,
+        "ofertadas": 0,
+        "ganadas": 0,
+        "perdidas": 0,
+        "aging_promedio": 0.0,
+        "tasa_conversion": 0.0,
+        "oferta_total": 0.0,
     }
 
 
