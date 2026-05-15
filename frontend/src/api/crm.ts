@@ -1,71 +1,125 @@
-import { apiClient } from './client';
-import type { Contact } from '../types';
+import apiClient from './client';
 
-export interface PaginatedContacts {
-  items: Contact[];
-  total: number;
-  page: number;
-  size: number;
+// ---- Types matching backend schemas ----
+
+export interface ContactoRef {
+  nombre: string;
+  rol?: string;
+  telefono?: string;
+  email?: string;
 }
 
-export interface ContactFilters {
+export interface Solicitud {
+  id: string;
+  codigo: string;
+  nombre_corto: string;
+  poblacion?: string;
+  estado: string;
+  kanban_column: string;
+  color_estado: string;
+  prioridad: string;
+  comercial?: string;
+  tecnico_estudios?: string;
+  fecha_solicitud?: string;
+  fecha_limite?: string;
+  aging_dias?: number;
+  oferta?: number;
+}
+
+export interface SolicitudFront extends Solicitud {
+  estudio_direccion?: string;
+  fechas: Record<string, string>;
+  presupuesto: Record<string, number>;
+  contactos: ContactoRef[];
+  actuaciones: string[];
+}
+
+export interface PipelineColumn {
+  column: string;
+  estado: string;
+  color: string;
+  count: number;
+  total_oferta: number;
+  items: Solicitud[];
+}
+
+export interface SolicitudFilters {
   page?: number;
   size?: number;
   search?: string;
-  stage?: string;
-  owner_id?: string;
+  estado?: string;
+  comercial?: string;
+  prioridad?: string;
 }
 
+export interface PaginatedSolicitudes {
+  items: Solicitud[];
+  total: number;
+  page: number;
+  size: number;
+  pages: number;
+}
+
+export interface DashboardStats {
+  total_solicitudes: number;
+  en_estudio: number;
+  ofertadas: number;
+  ganadas: number;
+  perdidas: number;
+  aging_promedio: number;
+  tasa_conversion: number;
+  oferta_total: number;
+}
+
+// ---- API client ----
+
 export const crmApi = {
-  // Listar contactos con paginacion y filtros
-  async listContacts(filters: ContactFilters = {}): Promise<PaginatedContacts> {
+  // Listar solicitudes con paginacion y filtros
+  async listSolicitudes(filters: SolicitudFilters = {}): Promise<PaginatedSolicitudes> {
     const params = new URLSearchParams();
     if (filters.page) params.set('page', String(filters.page));
     if (filters.size) params.set('size', String(filters.size));
     if (filters.search) params.set('search', filters.search);
-    if (filters.stage) params.set('stage', filters.stage);
-    if (filters.owner_id) params.set('owner_id', filters.owner_id);
+    if (filters.estado) params.set('estado', filters.estado);
+    if (filters.comercial) params.set('comercial', filters.comercial);
+    if (filters.prioridad) params.set('prioridad', filters.prioridad);
 
-    const response = await apiClient.get<PaginatedContacts>(
-      `/crm/contacts?${params.toString()}`
+    const { data } = await apiClient.get<PaginatedSolicitudes>(
+      `/crm/solicitudes?${params.toString()}`
     );
-    return response.data;
+    return data;
   },
 
-  // Obtener contacto por ID
-  async getContact(id: string): Promise<Contact> {
-    const response = await apiClient.get<Contact>(`/crm/contacts/${id}`);
-    return response.data;
+  // Obtener solicitud por ID
+  async getSolicitud(id: string): Promise<SolicitudFront> {
+    const { data } = await apiClient.get<SolicitudFront>(`/crm/solicitudes/${id}`);
+    return data;
   },
 
-  // Crear contacto
-  async createContact(data: Partial<Contact>): Promise<Contact> {
-    const response = await apiClient.post<Contact>('/crm/contacts', data);
-    return response.data;
+  // Obtener contexto IA de una solicitud
+  async getAIContext(id: string): Promise<Record<string, unknown>> {
+    const { data } = await apiClient.get(`/crm/solicitudes/${id}/context`);
+    return data;
   },
 
-  // Actualizar contacto
-  async updateContact(id: string, data: Partial<Contact>): Promise<Contact> {
-    const response = await apiClient.patch<Contact>(`/crm/contacts/${id}`, data);
-    return response.data;
-  },
-
-  // Eliminar contacto
-  async deleteContact(id: string): Promise<void> {
-    await apiClient.delete(`/crm/contacts/${id}`);
-  },
-
-  // Obtener etapas del pipeline
-  async getPipelineStages(): Promise<{ stage: string; count: number }[]> {
-    const response = await apiClient.get<{ stage: string; count: number }[]>(
-      '/crm/pipeline'
+  // Actualizar estado de una solicitud
+  async updateEstado(id: string, estado: string, nota?: string): Promise<Solicitud> {
+    const { data } = await apiClient.patch<Solicitud>(
+      `/crm/solicitudes/${id}/estado`,
+      { estado, nota }
     );
-    return response.data;
+    return data;
   },
 
-  // Obtener stats del dashboard
-  async getDashboardStats(): Promise<Record<string, number>> {
-    const response = await apiClient.get<Record<string, number>>('/crm/stats');
-    return response.data;
+  // Obtener pipeline kanban
+  async getPipeline(): Promise<PipelineColumn[]> {
+    const { data } = await apiClient.get<PipelineColumn[]>('/crm/pipeline');
+    return data;
+  },
+
+  // Obtener KPIs del dashboard
+  async getDashboard(): Promise<DashboardStats> {
+    const { data } = await apiClient.get<DashboardStats>('/crm/dashboard');
+    return data;
   },
 };
