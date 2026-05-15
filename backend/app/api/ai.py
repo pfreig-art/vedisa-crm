@@ -3,14 +3,14 @@ import json
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
+from fastapi.responses import StreamingResponse
 
 from app.services.llm_router import llm_router
 from app.providers.base import LLMRequest, LLMMessage, LLMIntent
 
 router = APIRouter()
 
-
-# ---- Schemas de entrada/salida -----------------------------------
+# ---- Schemas de entrada/salida ----------------------------------
 
 class AnalyzeRequest(BaseModel):
     solicitud_id: Optional[str] = None
@@ -31,7 +31,22 @@ class AIAnalysis(BaseModel):
     sources: list[str]
 
 
-# ---- Prompts por intencion ---------------------------------------
+class ChatRequest(BaseModel):
+    messages: list[dict]  # [{role, content}]
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    context: Optional[dict] = None
+
+
+class ChatResponse(BaseModel):
+    content: str
+    model: str
+    provider: str
+    prompt_tokens: int
+    completion_tokens: int
+
+
+# ---- Prompts por intencion -------------------------------------
 
 SYSTEM_PROMPT = """Eres un asistente CRM experto en analisis comercial y gestion de obras.
 Tu objetivo es ayudar al equipo de ventas y estudios a tomar decisiones rapidas y precisas.
@@ -45,60 +60,108 @@ INTENT_PROMPTS = {
     "pipeline_cluster": "Analiza el conjunto de solicitudes y detecta patrones, cuellos de botella y prioridades.",
 }
 
+# ---- Endpoints -------------------------------------------------
 
-# ---- Endpoints ---------------------------------------------------
+@router.post("/analyze/solicitud")
+async def analyze_solicitud(request: AnalyzeRequest):
+    """Analiza una solicitud CRM con el LLM seleccionado."""
+    intent_prompt = INTENT_PROMPTS.get(request.intent, INTENT_PROMPTS["summarize"])
+    context_str = json.dumps(request.context or {}, ensure_ascii=False, indent=2)
 
-@router.post("/analyze/solicitud", response_model=AIAnalysis)
-async def analyze_solicitud(req: AnalyzeRequest):
-    """Analiza una solicitud CRM y devuelve resumen, riesgos y acciones sugeridas."""
-    if not req.context and not req.solicitud_id:
-        raise HTTPException(400, "Se requiere solicitud_id o context")
+    messages = [
+        LLMMessage(role="system", content=SYSTEM_PROMPT),
+        LLMMessage(
+            role="user",
+            content=f"{intent_prompt}\n\nContexto de la solicitud:\n{context_str}",
+        ),
+    ]
 
-    context_str = json.dumps(req.context or {"solicitud_id": req.solicitud_id}, ensure_ascii=False)
-    intent_prompt = INTENT_PROMPTS.get(req.intent, INTENT_PROMPTS["summarize"])
-
-    llm_request = LLMRequest(
-        messages=[
-            LLMMessage(role="system", content=SYSTEM_PROMPT),
-            LLMMessage(
-                role="user",
-                content=f"{intent_prompt}\n\nContexto CRM:\n{context_str}",
-            ),
-        ],
-        intent=LLMIntent(req.intent) if req.intent in LLMIntent.__members__.values() else LLMIntent.GENERAL,
-        max_tokens=1024,
-        temperature=0.2,
-        response_format="json",
-    )
-
-    response = await llm_router.generate(llm_request, provider_name=req.provider)
-
+    import time
+    start = time.perf_counter()
     try:
-        parsed = json.loads(response.content)
-    except json.JSONDecodeError:
-        parsed = {"summary": response.content, "risks": [], "next_actions": [], "confidence": 0.5}
+        llm_request = LLMRequest(messages=messages, provider=request.provider)
+        response = await llm_router.chat(llm_request, provider_name=request.provider)
+        latency_ms = int((time.perf_counter() - start) * 1000)
 
-    return AIAnalysis(
-        summary=parsed.get("summary", ""),
-        risks=parsed.get("risks", []),
-        next_actions=parsed.get("next_actions", []),
-        confidence=parsed.get("confidence", 0.7),
-        provider=response.provider,
-        model=response.model,
-        tokens_used=response.tokens_used,
-        latency_ms=response.latency_ms,
-        sources=["crm_context"],
-    )
+        try:
+            data = json.loads(response.content)
+        except json.JSONDecodeError:
+            data = {
+                "summary": response.content,
+                "risks": [],
+                "next_actions": [],
+                "confidence": 0.7,
+            }
+
+        return AIAnalysis(
+            summary=data.get("summary", ""),
+            risks=data.get("risks", []),
+            next_actions=data.get("next_actions", []),
+            confidence=data.get("confidence", 0.7),
+            provider=response.provider,
+            model=response.model,
+            tokens_used=response.prompt_tokens + response.completion_tokens,
+            latency_ms=latency_ms,
+            sources=[f"solicitud:{request.solicitud_id}"] if request.solicitud_id else [],
+        )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@router.post("/chat")
+async def chat(request: ChatRequest):
+    """Endpoint de chat directo con el router LLM."""
+    messages = [
+        LLMMessage(role=m["role"], content=m["content"])
+        for m in request.messages
+    ]
+    try:
+        llm_request = LLMRequest(
+            messages=messages,
+            provider=request.provider,
+            model=request.model,
+        )
+        response = await llm_router.chat(llm_request, provider_name=request.provider)
+        return ChatResponse(
+            content=response.content,
+            model=response.model,
+            provider=response.provider,
+            prompt_tokens=response.prompt_tokens,
+            completion_tokens=response.completion_tokens,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.get("/providers")
 async def list_providers():
-    """Lista proveedores disponibles y su estado."""
-    return {"providers": llm_router.available_providers()}
+    """Lista los proveedores disponibles y su estado."""
+    return llm_router.available_providers()
+
+
+@router.get("/test/{provider_name}")
+async def test_provider(provider_name: str):
+    """Prueba un proveedor especifico con un health check."""
+    return await llm_router.test_provider(provider_name)
 
 
 @router.post("/providers/test")
-async def test_provider(name: str):
-    """Test de conectividad para un proveedor concreto."""
-    result = await llm_router.test_provider(name)
-    return result
+async def test_provider_post(body: dict):
+    """(Legacy) Prueba un proveedor especifico."""
+    name = body.get("name")
+    if not name:
+        raise HTTPException(status_code=422, detail="name is required")
+    return await llm_router.test_provider(name)
+
+
+@router.get("/health")
+async def health_check(provider: Optional[str] = None):
+    """Health check general o de un proveedor especifico."""
+    if provider:
+        result = await llm_router.test_provider(provider)
+        return {"status": result["status"], "providers": [result]}
+    providers = llm_router.available_providers()
+    return {
+        "status": "ok" if any(p["available"] for p in providers) else "degraded",
+        "providers": providers,
+    }
