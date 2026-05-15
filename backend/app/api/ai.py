@@ -1,12 +1,15 @@
 """Endpoints IA - Drawer contextual y gestion de proveedores LLM."""
 import json
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
 from fastapi.responses import StreamingResponse
 
 from app.services.llm_router import llm_router
 from app.providers.base import LLMRequest, LLMMessage, LLMIntent
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.database import get_session
+from app.services.ai_audit import log_ai_call, get_audit_log, get_provider_metrics
 
 router = APIRouter()
 
@@ -165,3 +168,30 @@ async def health_check(provider: Optional[str] = None):
         "status": "ok" if any(p["available"] for p in providers) else "degraded",
         "providers": providers,
     }
+
+
+# ---- Observabilidad IA -----------------------------------------------
+
+@router.get("/audit", tags=["IA"])
+async def get_ai_audit(
+    provider: Optional[str] = None,
+    endpoint: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_session),
+):
+    """Devuelve el log de auditoria de llamadas al LLM."""
+    logs = await get_audit_log(
+        db,
+        provider=provider,
+        endpoint=endpoint,
+        limit=limit,
+        offset=offset,
+    )
+    return {"items": [log.dict() for log in logs], "count": len(logs)}
+
+
+@router.get("/metrics", tags=["IA"])
+async def get_ai_metrics(db: AsyncSession = Depends(get_session)):
+    """Agrega metricas por proveedor: llamadas, tokens, latencia, tasa de exito."""
+    return await get_provider_metrics(db)
