@@ -25,6 +25,12 @@ export interface ProviderInfo {
   available: boolean;
 }
 
+export interface ProviderTestResult {
+  provider: string;
+  status: 'ok' | 'error' | 'not_configured';
+  error?: string;
+}
+
 export const llmApi = {
   /**
    * Send a chat message to the LLM router
@@ -47,15 +53,12 @@ export const llmApi = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: apiClient.defaults.headers.common?.['Authorization'] as string || '',
         },
         body: JSON.stringify(request),
       }
     );
 
-    if (!response.ok) throw new Error(`Stream error: ${response.statusText}`);
     if (!response.body) throw new Error('No response body');
-
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
 
@@ -69,7 +72,7 @@ export const llmApi = {
   },
 
   /**
-   * Get available LLM providers
+   * Get list of available providers
    */
   async getProviders(): Promise<ProviderInfo[]> {
     const { data } = await apiClient.get<ProviderInfo[]>('/api/ai/providers');
@@ -77,7 +80,17 @@ export const llmApi = {
   },
 
   /**
-   * Health check for a specific provider
+   * Test a specific provider with a health ping
+   */
+  async testProvider(provider: string): Promise<ProviderTestResult> {
+    const { data } = await apiClient.get<ProviderTestResult>(
+      `/api/ai/test/${provider}`
+    );
+    return data;
+  },
+
+  /**
+   * Health check (all or specific provider)
    */
   async healthCheck(provider?: string): Promise<{ status: string; providers: ProviderInfo[] }> {
     const params = provider ? { provider } : {};
@@ -85,5 +98,3 @@ export const llmApi = {
     return data;
   },
 };
-
-export default llmApi;
