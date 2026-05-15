@@ -201,8 +201,78 @@ npm run dev
 - [x] Endpoints CRM (solicitudes, pipeline, dashboard) con PostgreSQL real
 - [x] Abstraccion LLM multi-proveedor (OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter, LiteLLM)
 - [x] Endpoints IA (analyze/solicitud, chat, test, health, providers)
-- [ ] Frontend: AppShell + Sidebar + FilterBar
-- [ ] Frontend: TanStack Table server-side (SolicitudesPage)
-- [ ] Frontend: Kanban Pipeline (PipelineBoard)
-- [ ] Frontend: Drawer IA contextual (AIDrawer)
-- [ ] Observabilidad IA (audit log, metricas por proveedor)
+- [x] Frontend: AppShell + Sidebar + FilterBar
+- [x] Frontend: TanStack Table server-side (SolicitudesPage)
+- [x] Frontend: Kanban Pipeline (PipelineBoard)
+- [x] Frontend: Drawer IA contextual (AIDrawer)
+- [x] Observabilidad IA (audit log, metricas por proveedor)
+
+---
+
+## Entorno de desarrollo
+
+> **SO**: Windows 10/11  
+> **Shell**: PowerShell  
+> **Python**: 3.11 (venv local en `backend\.venv`)  
+> **Node**: 18+  
+> **BD**: PostgreSQL 16 corriendo en local (puerto 5432)  
+> **Repo local**: clonar en la ruta deseada, p.ej. `C:\dev\vedisa-crm`
+
+### Pull y arranque (PowerShell)
+
+```powershell
+# --- Pull ---
+cd C:\dev\vedisa-crm
+git pull origin main
+
+# --- Backend (terminal 1) ---
+cd backend
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+
+# --- Frontend (terminal 2) ---
+cd ..
+cd frontend
+npm install
+npm run dev
+```
+
+### URLs locales
+
+| Servicio | URL |
+|---|---|
+| Backend API | http://localhost:8000 |
+| Swagger docs | http://localhost:8000/docs |
+| Frontend | http://localhost:5173 |
+
+### Test rapido de endpoints (PowerShell)
+
+```powershell
+# Health
+Invoke-RestMethod http://localhost:8000/health
+
+# Register admin
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/auth/register `
+  -ContentType 'application/json' `
+  -Body '{"email":"admin@vedisa.com","nombre":"Admin","password":"admin123","rol":"admin"}'
+
+# Login -> guarda token
+$r = Invoke-RestMethod -Method Post -Uri http://localhost:8000/auth/login `
+  -ContentType 'application/json' `
+  -Body '{"email":"admin@vedisa.com","password":"admin123"}'
+$token = $r.access_token
+
+# Pipeline
+Invoke-RestMethod -Uri http://localhost:8000/crm/pipeline `
+  -Headers @{Authorization="Bearer $token"}
+
+# IA metrics
+Invoke-RestMethod -Uri http://localhost:8000/ai/metrics `
+  -Headers @{Authorization="Bearer $token"}
+
+# IA audit log
+Invoke-RestMethod -Uri http://localhost:8000/ai/audit `
+  -Headers @{Authorization="Bearer $token"}
+```
