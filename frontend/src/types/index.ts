@@ -23,13 +23,16 @@ export interface Deal {
   created_at: string
 }
 
+// DashboardStats - aligned with backend /crm/dashboard schema
 export interface DashboardStats {
-  total_contacts: number
-  total_deals: number
-  pipeline_value: number
-  conversion_rate: number
-  contacts_by_status: Record<string, number>
-  deals_by_stage: Record<string, number>
+  total_solicitudes: number
+  en_estudio: number
+  ofertadas: number
+  ganadas: number
+  perdidas: number
+  aging_promedio: number
+  tasa_conversion: number
+  oferta_total: number
 }
 
 // AI Types
@@ -56,5 +59,5 @@ export interface AIResponse {
   content: string
   provider: string
   model: string
-  tokens_used?: number
+  tokens_used: number
 }
