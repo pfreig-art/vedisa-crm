@@ -73,3 +73,30 @@ class Solicitud(SQLModel, table=True):
     # --- Timestamps ---
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: Optional[datetime] = Field(default=None)
+
+
+# ---------------------------------------------------------------------------
+# AIAuditLog
+# ---------------------------------------------------------------------------
+class AIAuditLog(SQLModel, table=True):
+    """Registro de auditoria de llamadas al LLM."""
+    __tablename__ = "ai_audit_log"
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    # Identificacion de la llamada
+    endpoint: str = Field(index=True)          # analyze | chat | test
+    solicitud_id: Optional[str] = Field(default=None, index=True)
+    usuario_id: Optional[str] = Field(default=None, index=True)
+    # Proveedor / modelo
+    provider: str = Field(index=True)
+    model: str
+    # Metricas
+    prompt_tokens: int = Field(default=0)
+    completion_tokens: int = Field(default=0)
+    total_tokens: int = Field(default=0)
+    latency_ms: int = Field(default=0)
+    # Resultado
+    success: bool = Field(default=True)
+    error_msg: Optional[str] = Field(default=None)
+    # Timestamp
+    created_at: datetime = Field(default_factory=datetime.utcnow)
