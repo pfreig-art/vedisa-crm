@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+  }
+
+  body {
+    @apply bg-gray-50 text-gray-900;
+  }
+}
+
+@layer components {
+  .drawer-overlay {
+    @apply fixed inset-0 bg-black/40 z-40 transition-opacity;
+  }
+  .drawer-panel {
+    @apply fixed right-0 top-0 h-full w-96 bg-white shadow-2xl z-50 transform transition-transform;
+  }
+}
