@@ -2,6 +2,7 @@
 from datetime import datetime
 from typing import Optional, List
 from sqlmodel import select, func
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.models import AIAuditLog
@@ -69,7 +70,7 @@ async def get_provider_metrics(db: AsyncSession) -> List[dict]:
             func.sum(AIAuditLog.total_tokens).label("total_tokens"),
             func.avg(AIAuditLog.latency_ms).label("avg_latency_ms"),
             func.sum(
-                func.cast(AIAuditLog.success, int if True else int)
+                            func.cast(AIAuditLog.success, sa.Integer)
             ).label("success_calls"),
         )
         .group_by(AIAuditLog.provider)
