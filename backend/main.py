@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.database import create_db_and_tables
 from app.api.crm import router as crm_router
 from app.api.ai import router as ai_router
+from app.api.auth import router as auth_router
 
 
 @asynccontextmanager
@@ -33,6 +34,7 @@ app.add_middleware(
 )
 
 # Routers
+app.include_router(auth_router, prefix="/auth", tags=["Auth"])
 app.include_router(crm_router, prefix="/crm", tags=["CRM"])
 app.include_router(ai_router, prefix="/ai", tags=["IA"])
 
