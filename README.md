@@ -297,13 +297,13 @@ Invoke-RestMethod -Uri http://localhost:8000/ai/audit `
 - [x] Endpoints /ai/audit y /ai/metrics
 - [x] OpenTelemetry básico + tabla audit
 
-### Fase 3 — Productización (pendiente 🔜)
-- [ ] Dashboard KPIs (conversión, tiempo medio, forecast)
-- [ ] Notificaciones en tiempo real (WebSocket o SSE)
-- [ ] Exportación PDF / Excel de solicitudes
-- [ ] Tests E2E (Playwright)
-- [ ] Docker Compose producción (backend + frontend + postgres)
-- [ ] CI/CD GitHub Actions
+### Fase 3 — Productización (en progreso 🚧)
+- [x] Dashboard KPIs (conversión, tiempo medio, forecast)
+- [x] Notificaciones en tiempo real (SSE — `useSSE.ts` hook)
+- [x] Exportación CSV / Excel de solicitudes (`openpyxl`)
+- [x] Tests E2E — Playwright config + `auth.spec.ts`
+- [x] Docker Compose producción (`docker-compose.prod.yml`)
+- [x] CI/CD GitHub Actions (`.github/workflows/ci.yml`)
 - [ ] Documentación OpenAPI exportada
 
 ### Fase 4 — Escala (futuro 🔭)
