@@ -228,6 +228,21 @@ export interface Actuacion {
   activo: boolean
 }
 
+/** Linea de actuacion asignada a una solicitud (Sprint D bloque C). */
+export interface SolicitudActuacionLine {
+  actuacion_id: string
+  actuacion_nombre: string
+  m2?: number | null
+  importe?: number | null
+}
+
+/** Payload de entrada para PUT /solicitudes/{id}/actuaciones. */
+export interface SolicitudActuacionInput {
+  actuacion_id: string
+  m2?: number | null
+  importe?: number | null
+}
+
 export interface DashboardMonth {
   mes: string
   oferta: number
@@ -412,13 +427,41 @@ export const crmApi = {
     return data as Actuacion[]
   },
 
-  listSolicitudActuaciones: async (solicitudId: string): Promise<Actuacion[]> => {
+  listSolicitudActuaciones: async (
+    solicitudId: string,
+  ): Promise<SolicitudActuacionLine[]> => {
     const { data } = await api.get(`/crm/solicitudes/${solicitudId}/actuaciones`)
-    return data as Actuacion[]
+    return data as SolicitudActuacionLine[]
   },
 
-  setSolicitudActuaciones: async (solicitudId: string, actuacionIds: string[]): Promise<void> => {
-    await api.put(`/crm/solicitudes/${solicitudId}/actuaciones`, { actuacion_ids: actuacionIds })
+  setSolicitudActuaciones: async (
+    solicitudId: string,
+    actuaciones: SolicitudActuacionInput[],
+  ): Promise<void> => {
+    await api.put(`/crm/solicitudes/${solicitudId}/actuaciones`, { actuaciones })
+  },
+
+  /** URL absoluta del PDF de oferta para descarga directa. */
+  ofertaPdfUrl: (solicitudId: string): string => {
+    const base = (api.defaults.baseURL ?? '').replace(/\/$/, '')
+    return `${base}/crm/solicitudes/${solicitudId}/oferta.pdf`
+  },
+
+  /** Descarga el PDF como Blob para evitar el problema de Authorization en window.open. */
+  descargarOfertaPdf: async (solicitudId: string): Promise<Blob> => {
+    const { data } = await api.get(
+      `/crm/solicitudes/${solicitudId}/oferta.pdf`,
+      { responseType: 'blob' },
+    )
+    return data as Blob
+  },
+
+  /** Recordatorio mailto para una solicitud (solo admin). */
+  recordatorioMailto: async (
+    solicitudId: string,
+  ): Promise<{ asunto: string; cuerpo: string; mailto_url: string; dias_a_limite: number | null }> => {
+    const { data } = await api.get(`/crm/alertas/recordatorio/${solicitudId}`)
+    return data
   },
 
   // -- Sprint C: Historial de auditoria --
