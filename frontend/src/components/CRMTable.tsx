@@ -24,7 +24,7 @@ export default function CRMTable<T>({ data, columns, onRowClick, aiContextKey }:
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [globalFilter, setGlobalFilter] = useState('')
-  const { openDrawer, setContext } = useAIStore()
+  const { openDrawer } = useAIStore()
 
   const table = useReactTable({
     data,
@@ -40,8 +40,11 @@ export default function CRMTable<T>({ data, columns, onRowClick, aiContextKey }:
   })
 
   const handleOpenAI = () => {
-    setContext({ [aiContextKey || 'data']: data, total: data.length })
-    openDrawer()
+    openDrawer({
+      mode: 'default',
+      title: 'Analisis IA del listado',
+      context: { [aiContextKey || 'data']: data, total: data.length },
+    })
   }
 
   return (

@@ -163,6 +163,31 @@ export default function Dashboard() {
 
   const exportUrl = `${API_URL}/crm/solicitudes/export?formato=csv`
 
+  // Contexto enriquecido para el drawer IA: incluye KPIs, embudo,
+  // forecast, alertas y mix de actuaciones / top comerciales / heatmap
+  // (todo lo que la pagina ya tiene cargado en memoria).
+  const aiContext = {
+    kpis: safeStats,
+    funnel: [
+      { estado: 'En Estudio', count: safeStats.en_estudio },
+      { estado: 'Enviada', count: safeStats.ofertadas },
+      { estado: 'Adjudicada', count: safeStats.ganadas },
+    ],
+    forecast_mensual: safeStats.forecast_mensual,
+    alertas: alertas
+      ? {
+          total_vencidas: alertas.total_vencidas,
+          total_proximas: alertas.total_proximas,
+          vencidas: alertas.vencidas?.slice(0, 10) ?? [],
+          proximas: alertas.proximas?.slice(0, 10) ?? [],
+        }
+      : null,
+    mix_actuaciones: extended?.mix_actuaciones ?? [],
+    top_comerciales: extended?.top_comerciales ?? [],
+    heatmap_estados_dias: extended?.heatmap ?? [],
+  }
+  const aiReady = !isLoading && !!stats
+
   // Datos del embudo para recharts FunnelChart
   const funnelData = [
     { name: 'En Estudio', value: safeStats.en_estudio, fill: ESTADO_META['En Estudio'].color },
@@ -202,11 +227,19 @@ export default function Dashboard() {
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={() => openDrawer({ mode: 'dashboard', title: 'Analisis IA del dashboard', context: safeStats })}
-              className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-500"
+              disabled={!aiReady}
+              aria-busy={!aiReady}
+              onClick={() =>
+                openDrawer({
+                  mode: 'dashboard',
+                  title: 'Analisis IA del dashboard',
+                  context: aiContext,
+                })
+              }
+              className="inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Bot className="h-4 w-4" />
-              Analizar con IA
+              {aiReady ? 'Analizar con IA' : 'Cargando datos…'}
             </button>
             <a
               href={exportUrl}
