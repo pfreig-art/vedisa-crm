@@ -313,3 +313,34 @@ Invoke-RestMethod -Uri http://localhost:8000/ai/audit `
 - [ ] Fine-tuning de prompts por vertical de negocio
 - [ ] SDK cliente TypeScript autogenerado (openapi-typescript)
 
+
+
+---
+
+## Changelog
+
+### v0.3.0 — Fase 3 Productización (2025)
+- Kanban Pipeline Board con UI estilo Minority Report (`PipelineBoard.tsx`)
+- CRUD completo de Solicitudes con drawer lateral (`SolicitudSheet.tsx`) usando `react-hook-form`
+- Dashboard KPIs: conversión, tiempo medio, forecast (`/dashboard`)
+- Notificaciones en tiempo real SSE (`notifications.py` + `useSSE.ts`)
+- Exportación CSV / Excel con `openpyxl` (`/solicitudes/export`)
+- Tests E2E Playwright (`e2e/auth.spec.ts`, `playwright.config.ts`)
+- Docker Compose producción (`docker-compose.prod.yml`)
+- CI/CD GitHub Actions (`.github/workflows/ci.yml`)
+- Script exportación OpenAPI (`backend/scripts/export_openapi.py`)
+
+### v0.2.0 — Fase 2 IA Contextual
+- Drawer IA contextual multi-proveedor (OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter)
+- `AIContextBundle` con carga de contexto de solicitud desde BBDD
+- Prompts versionados (`prompt_service.py`)
+- Modelo `AIAuditLog` y endpoints `/ai/audit`, `/ai/metrics`
+- OpenTelemetry básico
+
+### v0.1.0 — Fase 1 Core CRM
+- Modelos SQLModel: Solicitud, Contacto, Actuacion, Etapa
+- Auth JWT + roles (admin / comercial)
+- Endpoints CRUD solicitudes con paginación server-side
+- Endpoint pipeline Kanban
+- TanStack Table v8 server-side en frontend
+- AppShell con sidebar + routing React
