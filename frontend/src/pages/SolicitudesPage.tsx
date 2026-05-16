@@ -1,315 +1,186 @@
-import { useState, useCallback } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import {
-  useReactTable,
-  getCoreRowModel,
-  flexRender,
-  ColumnDef,
-  SortingState,
-  PaginationState,
-} from '@tanstack/react-table';
-import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight, Bot, Filter } from 'lucide-react';
-import { crmApi, Solicitud } from '../api/crm';
-import { useAIStore } from '../store/aiStore';
-
-const ESTADOS = ['En Estudio', 'Enviada', 'Adjudicada', 'Rechazada', 'Descartada'];
-const PRIORIDADES = ['alta', 'media', 'baja'];
-
-const ESTADO_COLOR: Record<string, string> = {
-  'En Estudio': 'bg-indigo-100 text-indigo-800',
-  'Enviada': 'bg-amber-100 text-amber-800',
-  'Adjudicada': 'bg-emerald-100 text-emerald-800',
-  'Rechazada': 'bg-red-100 text-red-800',
-  'Descartada': 'bg-gray-100 text-gray-600',
-};
-
-const PRIORIDAD_COLOR: Record<string, string> = {
-  alta: 'bg-red-100 text-red-700',
-  media: 'bg-yellow-100 text-yellow-700',
-  baja: 'bg-green-100 text-green-700',
-};
+import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { crmApi, Solicitud } from '../api/crm'
+import { Search, RefreshCw } from 'lucide-react'
 
 export default function SolicitudesPage() {
-  const queryClient = useQueryClient();
-  const { setContext, openDrawer } = useAIStore();
+  const [search, setSearch] = useState('')
+  const [estado, setEstado] = useState('')
+  const [prioridad, setPrioridad] = useState('')
+  const [comercial, setComercial] = useState('')
 
-  // --- Filtros ---
-  const [estado, setEstado] = useState('');
-  const [prioridad, setPrioridad] = useState('');
-  const [comercial, setComercial] = useState('');
-  const [showFilters, setShowFilters] = useState(false);
+  const { data, isLoading, isFetching, refetch } = useQuery({
+    queryKey: ['solicitudes'],
+    queryFn: () => crmApi.listSolicitudes(),
+  })
 
-  // --- Paginacion y sorting server-side ---
-  const [sorting, setSorting] = useState<SortingState>([]);
-  const [{ pageIndex, pageSize }, setPagination] = useState<PaginationState>({
-    pageIndex: 0,
-    pageSize: 20,
-  });
+  const rows = Array.isArray(data?.items) ? data.items : []
 
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['solicitudes', pageIndex, pageSize, estado, prioridad, comercial],
-    queryFn: () =>
-      crmApi.listSolicitudes({
-        page: pageIndex + 1,
-        size: pageSize,
-        estado: estado || undefined,
-        prioridad: prioridad || undefined,
-        comercial: comercial || undefined,
-      }),
-    placeholderData: (prev) => prev,
-  });
+  const solicitudes = useMemo<Solicitud[]>(() => {
+    return rows.filter((item) => {
+      const matchesSearch =
+        !search ||
+        item.codigo?.toLowerCase().includes(search.toLowerCase()) ||
+        item.nombre_corto?.toLowerCase().includes(search.toLowerCase()) ||
+        item.poblacion?.toLowerCase().includes(search.toLowerCase())
 
-  const updateEstado = useMutation({
-    mutationFn: ({ id, estado }: { id: string; estado: string }) =>
-      crmApi.updateEstado(id, estado),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['solicitudes'] }),
-  });
+      const matchesEstado = !estado || item.estado === estado
+      const matchesPrioridad = !prioridad || item.prioridad === prioridad
+      const matchesComercial = !comercial || item.comercial === comercial
 
-  const handleAnalyzeAI = useCallback(
-    async (sol: Solicitud) => {
-      const ctx = await crmApi.getSolicitudContext(sol.id);
-      setContext({ data: ctx, total: 1 });
-      openDrawer();
-    },
-    [setContext, openDrawer]
-  );
+      return matchesSearch && matchesEstado && matchesPrioridad && matchesComercial
+    })
+  }, [rows, search, estado, prioridad, comercial])
 
-  const columns: ColumnDef<Solicitud>[] = [
-    {
-      accessorKey: 'codigo',
-      header: 'Codigo',
-      size: 100,
-    },
-    {
-      accessorKey: 'nombre_corto',
-      header: 'Nombre',
-      cell: ({ row }) => (
-        <span className="font-medium text-gray-900">{row.original.nombre_corto}</span>
-      ),
-    },
-    {
-      accessorKey: 'poblacion',
-      header: 'Poblacion',
-    },
-    {
-      accessorKey: 'estado',
-      header: 'Estado',
-      cell: ({ row }) => (
-        <span
-          className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-            ESTADO_COLOR[row.original.estado] ?? 'bg-gray-100 text-gray-700'
-          }`}
-        >
-          {row.original.estado}
-        </span>
-      ),
-    },
-    {
-      accessorKey: 'prioridad',
-      header: 'Prioridad',
-      cell: ({ row }) => (
-        <span
-          className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-            PRIORIDAD_COLOR[row.original.prioridad ?? 'media']
-          }`}
-        >
-          {row.original.prioridad ?? 'media'}
-        </span>
-      ),
-    },
-    {
-      accessorKey: 'comercial',
-      header: 'Comercial',
-    },
-    {
-      accessorKey: 'oferta',
-      header: 'Oferta',
-      cell: ({ row }) =>
-        row.original.oferta != null
-          ? new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(
-              row.original.oferta
-            )
-          : '-',
-    },
-    {
-      accessorKey: 'aging_dias',
-      header: 'Aging',
-      cell: ({ row }) =>
-        row.original.aging_dias != null ? `${row.original.aging_dias}d` : '-',
-    },
-    {
-      id: 'actions',
-      header: '',
-      size: 60,
-      cell: ({ row }) => (
-        <button
-          onClick={() => handleAnalyzeAI(row.original)}
-          title="Analizar con IA"
-          className="p-1.5 rounded-md text-brand-600 hover:bg-brand-50 transition-colors"
-        >
-          <Bot size={16} />
-        </button>
-      ),
-    },
-  ];
+  const estados = useMemo(() => {
+    return Array.from(new Set(rows.map((s) => s.estado).filter(Boolean)))
+  }, [rows])
 
-  const table = useReactTable({
-    data: data?.items ?? [],
-    columns,
-    pageCount: data?.pages ?? -1,
-    state: { sorting, pagination: { pageIndex, pageSize } },
-    onSortingChange: setSorting,
-    onPaginationChange: setPagination,
-    getCoreRowModel: getCoreRowModel(),
-    manualPagination: true,
-    manualSorting: true,
-  });
+  const prioridades = useMemo(() => {
+    return Array.from(new Set(rows.map((s) => s.prioridad).filter(Boolean)))
+  }, [rows])
+
+  const comerciales = useMemo(() => {
+    return Array.from(new Set(rows.map((s) => s.comercial).filter(Boolean)))
+  }, [rows])
+
+  if (isLoading) {
+    return (
+      <div className="p-6">
+        <div className="rounded-2xl border border-slate-800 bg-slate-900 p-6 text-sm text-slate-400">
+          Cargando solicitudes…
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="p-6 space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Solicitudes</h1>
-          <p className="text-sm text-gray-500">
-            {data?.total ?? 0} solicitudes
-          </p>
-        </div>
-        <button
-          onClick={() => setShowFilters((v) => !v)}
-          className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors"
-        >
-          <Filter size={16} />
-          Filtros
-        </button>
-      </div>
-
-      {/* Filtros */}
-      {showFilters && (
-        <div className="bg-white border border-gray-200 rounded-xl p-4 grid grid-cols-3 gap-4">
+    <div className="min-h-full bg-slate-950 text-slate-100">
+      <div className="mx-auto max-w-7xl px-6 py-6">
+        <div className="mb-6 flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Estado</label>
+            <h1 className="text-2xl font-semibold tracking-tight">Solicitudes</h1>
+            <p className="mt-1 text-sm text-slate-400">Listado filtrable de oportunidades y solicitudes.</p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void refetch()}
+            className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/10"
+          >
+            <RefreshCw className={`h-4 w-4 ${isFetching ? 'animate-spin' : ''}`} />
+            Actualizar
+          </button>
+        </div>
+
+        <div className="mb-6 grid gap-3 rounded-2xl border border-white/10 bg-slate-900/80 p-4 md:grid-cols-2 xl:grid-cols-5">
+          <div className="xl:col-span-2">
+            <label className="mb-2 block text-xs uppercase tracking-wide text-slate-400">Buscar</label>
+            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2">
+              <Search className="h-4 w-4 text-slate-500" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Código, nombre, población..."
+                className="w-full bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-xs uppercase tracking-wide text-slate-400">Estado</label>
             <select
               value={estado}
-              onChange={(e) => { setEstado(e.target.value); setPagination((p) => ({ ...p, pageIndex: 0 })); }}
-              className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              onChange={(e) => setEstado(e.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
             >
               <option value="">Todos</option>
-              {ESTADOS.map((e) => <option key={e} value={e}>{e}</option>)}
+              {estados.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
             </select>
           </div>
+
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Prioridad</label>
+            <label className="mb-2 block text-xs uppercase tracking-wide text-slate-400">Prioridad</label>
             <select
               value={prioridad}
-              onChange={(e) => { setPrioridad(e.target.value); setPagination((p) => ({ ...p, pageIndex: 0 })); }}
-              className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              onChange={(e) => setPrioridad(e.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
             >
               <option value="">Todas</option>
-              {PRIORIDADES.map((p) => <option key={p} value={p}>{p}</option>)}
+              {prioridades.map((item) => (
+                <option key={item} value={item ?? ''}>
+                  {item}
+                </option>
+              ))}
             </select>
           </div>
+
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">Comercial</label>
-            <input
-              type="text"
+            <label className="mb-2 block text-xs uppercase tracking-wide text-slate-400">Comercial</label>
+            <select
               value={comercial}
-              onChange={(e) => { setComercial(e.target.value); setPagination((p) => ({ ...p, pageIndex: 0 })); }}
-              placeholder="Filtrar por comercial..."
-              className="w-full border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-            />
+              onChange={(e) => setComercial(e.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none"
+            >
+              <option value="">Todos</option>
+              {comerciales.map((item) => (
+                <option key={item} value={item ?? ''}>
+                  {item}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
-      )}
 
-      {/* Tabla */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        {isLoading && (
-          <div className="flex items-center justify-center h-32 text-gray-400">Cargando...</div>
-        )}
-        {isError && (
-          <div className="flex items-center justify-center h-32 text-red-500">Error al cargar solicitudes</div>
-        )}
-        {!isLoading && !isError && (
+        <div className="overflow-hidden rounded-2xl border border-white/10 bg-slate-900/80 shadow-sm">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                {table.getHeaderGroups().map((hg) => (
-                  <tr key={hg.id}>
-                    {hg.headers.map((header) => (
-                      <th
-                        key={header.id}
-                        onClick={header.column.getToggleSortingHandler()}
-                        className="px-4 py-3 text-left font-medium text-gray-600 cursor-pointer select-none hover:bg-gray-100"
-                        style={{ width: header.getSize() }}
-                      >
-                        <div className="flex items-center gap-1">
-                          {flexRender(header.column.columnDef.header, header.getContext())}
-                          {header.column.getIsSorted() === 'asc' ? (
-                            <ChevronUp size={14} />
-                          ) : header.column.getIsSorted() === 'desc' ? (
-                            <ChevronDown size={14} />
-                          ) : null}
-                        </div>
-                      </th>
-                    ))}
-                  </tr>
-                ))}
+            <table className="min-w-full text-sm">
+              <thead className="bg-white/5 text-left text-xs uppercase tracking-wide text-slate-400">
+                <tr>
+                  <th className="px-4 py-3">Código</th>
+                  <th className="px-4 py-3">Nombre</th>
+                  <th className="px-4 py-3">Población</th>
+                  <th className="px-4 py-3">Estado</th>
+                  <th className="px-4 py-3">Prioridad</th>
+                  <th className="px-4 py-3">Comercial</th>
+                  <th className="px-4 py-3 text-right">Oferta</th>
+                </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                {table.getRowModel().rows.map((row) => (
-                  <tr key={row.id} className="hover:bg-gray-50 transition-colors">
-                    {row.getVisibleCells().map((cell) => (
-                      <td key={cell.id} className="px-4 py-3">
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </td>
-                    ))}
+              <tbody>
+                {solicitudes.map((item) => (
+                  <tr key={item.id} className="border-t border-white/5">
+                    <td className="px-4 py-3 font-mono text-cyan-300">{item.codigo}</td>
+                    <td className="px-4 py-3 text-white">{item.nombre_corto}</td>
+                    <td className="px-4 py-3 text-slate-300">{item.poblacion || '-'}</td>
+                    <td className="px-4 py-3 text-slate-300">{item.estado}</td>
+                    <td className="px-4 py-3 text-slate-300">{item.prioridad || '-'}</td>
+                    <td className="px-4 py-3 text-slate-300">{item.comercial || '-'}</td>
+                    <td className="px-4 py-3 text-right text-slate-200">
+                      {new Intl.NumberFormat('es-ES', {
+                        style: 'currency',
+                        currency: 'EUR',
+                        maximumFractionDigits: 0,
+                      }).format(item.oferta ?? 0)}
+                    </td>
                   </tr>
                 ))}
+
+                {solicitudes.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-10 text-center text-slate-500">
+                      No hay solicitudes que coincidan con los filtros.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
-        )}
-
-        {/* Paginacion */}
-        {data && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
-            <span className="text-sm text-gray-500">
-              Pagina {pageIndex + 1} de {data.pages} &bull; {data.total} registros
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPagination((p) => ({ ...p, pageIndex: 0 }))}
-                disabled={pageIndex === 0}
-                className="p-1 rounded disabled:opacity-40 hover:bg-gray-200 transition-colors"
-              >
-                &laquo;
-              </button>
-              <button
-                onClick={() => setPagination((p) => ({ ...p, pageIndex: p.pageIndex - 1 }))}
-                disabled={pageIndex === 0}
-                className="p-1 rounded disabled:opacity-40 hover:bg-gray-200 transition-colors"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <button
-                onClick={() => setPagination((p) => ({ ...p, pageIndex: p.pageIndex + 1 }))}
-                disabled={pageIndex >= data.pages - 1}
-                className="p-1 rounded disabled:opacity-40 hover:bg-gray-200 transition-colors"
-              >
-                <ChevronRight size={16} />
-              </button>
-              <button
-                onClick={() => setPagination((p) => ({ ...p, pageIndex: data.pages - 1 }))}
-                disabled={pageIndex >= data.pages - 1}
-                className="p-1 rounded disabled:opacity-40 hover:bg-gray-200 transition-colors"
-              >
-                &raquo;
-              </button>
-            </div>
-          </div>
-        )}
+        </div>
       </div>
     </div>
-  );
+  )
 }
