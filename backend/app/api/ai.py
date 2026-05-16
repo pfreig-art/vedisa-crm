@@ -1,15 +1,30 @@
 """Endpoints IA - Drawer contextual y gestion de proveedores LLM."""
+import hashlib
 import json
-from fastapi import APIRouter, HTTPException, Depends
+import time
+from fastapi import APIRouter, HTTPException, Depends, Response
 from pydantic import BaseModel
-from typing import Optional
+from typing import Any, Optional
 from fastapi.responses import StreamingResponse
+
+import structlog
 
 from app.services.llm_router import llm_router
 from app.providers.base import LLMRequest, LLMMessage, LLMIntent
+from app.services.ai_prompts import (
+    build_brief_prompt,
+    fallback_response,
+    parse_brief_response,
+)
+from app.services.schema_summary import get_schema_summary
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_session
+from app.core.auth import get_current_user
+from app.core.models import Usuario
 from app.services.ai_audit import log_ai_call, get_audit_log, get_provider_metrics
+
+
+_brief_log = structlog.get_logger("vedisa.ai.brief")
 
 router = APIRouter()
 
@@ -130,6 +145,158 @@ async def chat(request: ChatRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Sprint E2: brief contextual con cache 60s
+# ---------------------------------------------------------------------------
+
+class BriefRequest(BaseModel):
+    mode: str = "default"  # default | dashboard | solicitud | obra
+    context: Optional[dict] = None
+    force_refresh: bool = False
+
+
+class BriefResponse(BaseModel):
+    summary: str
+    bullets: list[str]
+    suggested_questions: list[str]
+    chart_specs: list[dict]
+    model: str
+    provider: str
+    tokens_used: int
+    latency_ms: int
+
+
+_BRIEF_CACHE_TTL = 60.0  # segundos
+_brief_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _stable_json(value: Any) -> str:
+    """Serializa un valor de forma estable (sort_keys) para hashing."""
+    try:
+        return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _make_cache_key(user_id: str, mode: str, context: Any) -> str:
+    payload = f"{user_id}::{mode}::{_stable_json(context)}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+@router.post("/brief", response_model=BriefResponse)
+async def ai_brief(
+    request: BriefRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_session),
+    current_user: Usuario = Depends(get_current_user),
+):
+    """Genera un brief contextual al abrir el drawer IA (Sprint E2).
+
+    Fuerza provider='openai' (gpt-4o) por decision de diseno: el brief
+    queremos uniforme entre tenants aunque el primary del router sea otro.
+    Cachea 60s por (user.id, mode, context). Si el provider falla o el JSON
+    no parsea, devuelve un fallback graceful con status 200.
+    """
+    mode = (request.mode or "default").strip().lower()
+    cache_key = _make_cache_key(current_user.id, mode, request.context)
+
+    # --- Cache hit ----------------------------------------------------
+    if not request.force_refresh:
+        cached = _brief_cache.get(cache_key)
+        if cached is not None:
+            expires_at, payload = cached
+            if expires_at > time.monotonic():
+                response.headers["X-Brief-Cached"] = "true"
+                return payload
+            _brief_cache.pop(cache_key, None)
+
+    response.headers["X-Brief-Cached"] = "false"
+
+    # --- Construir prompts -------------------------------------------
+    try:
+        schema = get_schema_summary()
+    except Exception as exc:  # pragma: no cover - defensivo
+        _brief_log.warning("schema_summary_error", error=str(exc))
+        schema = ""
+
+    msgs = build_brief_prompt(mode, request.context, schema)
+    llm_messages = [LLMMessage(role=m["role"], content=m["content"]) for m in msgs]
+    llm_request = LLMRequest(messages=llm_messages, response_format="json")
+
+    start = time.perf_counter()
+    parsed: dict | None = None
+    provider_used = "openai"
+    model_used = ""
+    tokens_used = 0
+    success = True
+    error_msg: Optional[str] = None
+
+    try:
+        # Forzamos provider='openai' (gpt-4o) por decision de diseno del brief.
+        llm_response = await llm_router.generate(llm_request, provider_name="openai")
+        provider_used = llm_response.provider
+        model_used = llm_response.model
+        tokens_used = llm_response.tokens_used
+        parsed = parse_brief_response(llm_response.content)
+        if not parsed.get("summary"):
+            # JSON parseable pero sin summary util -> fallback.
+            parsed = fallback_response("respuesta sin summary util")
+            success = False
+            error_msg = "respuesta sin summary util"
+    except Exception as exc:
+        success = False
+        error_msg = str(exc)
+        parsed = fallback_response(error_msg)
+        _brief_log.warning(
+            "brief_provider_error", error=error_msg, mode=mode
+        )
+
+    latency_ms = int((time.perf_counter() - start) * 1000)
+
+    # --- Auditar la llamada ------------------------------------------
+    try:
+        await log_ai_call(
+            db,
+            endpoint="brief",
+            provider=provider_used or "openai",
+            model=model_used or "unknown",
+            prompt_tokens=0,
+            completion_tokens=tokens_used,
+            latency_ms=latency_ms,
+            success=success,
+            error_msg=error_msg,
+            solicitud_id=None,
+            usuario_id=current_user.id,
+        )
+    except Exception as exc:  # pragma: no cover
+        _brief_log.warning("audit_log_error", error=str(exc))
+
+    payload = {
+        "summary": parsed.get("summary", ""),
+        "bullets": parsed.get("bullets", []),
+        "suggested_questions": parsed.get("suggested_questions", []),
+        "chart_specs": parsed.get("chart_specs", []),
+        "model": model_used or "fallback",
+        "provider": provider_used or "openai",
+        "tokens_used": tokens_used,
+        "latency_ms": latency_ms,
+    }
+
+    # --- Guardar en cache solo si fue exito ---------------------------
+    if success:
+        _brief_cache[cache_key] = (
+            time.monotonic() + _BRIEF_CACHE_TTL,
+            payload,
+        )
+
+    return payload
+
+
+def _reset_brief_cache() -> None:
+    """Util para tests."""
+    _brief_cache.clear()
 
 
 @router.get("/providers")
