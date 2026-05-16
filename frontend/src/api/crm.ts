@@ -13,6 +13,20 @@ api.interceptors.request.use((cfg) => {
   return cfg
 })
 
+// Si una llamada autenticada devuelve 401, la sesión murió: limpiar y mandar a /login.
+api.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    if (err?.response?.status === 401) {
+      localStorage.removeItem('access_token')
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+        window.location.assign('/login')
+      }
+    }
+    return Promise.reject(err)
+  },
+)
+
 export interface Solicitud {
   id: string
   codigo: string

@@ -5,6 +5,28 @@ const api = axios.create({
   withCredentials: true,
 })
 
+api.interceptors.request.use((cfg) => {
+  const token = localStorage.getItem('access_token')
+  if (token) {
+    cfg.headers = cfg.headers ?? {}
+    cfg.headers.Authorization = `Bearer ${token}`
+  }
+  return cfg
+})
+
+api.interceptors.response.use(
+  (r) => r,
+  (err) => {
+    if (err?.response?.status === 401) {
+      localStorage.removeItem('access_token')
+      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+        window.location.assign('/login')
+      }
+    }
+    return Promise.reject(err)
+  },
+)
+
 export interface LLMProvider {
   name: string
   provider?: string
@@ -44,6 +66,7 @@ export interface LLMChatResponse {
   provider?: string
   model?: string
   latency_ms?: number
+  tokens_used?: number
 }
 
 export const llmApi = {
