@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { crmApi, DashboardStats } from '../api/crm'
-import { Users, TrendingUp, DollarSign, BarChart2, Bot, Target } from 'lucide-react'
+import { TrendingUp, DollarSign, BarChart2, Bot, Target, Clock, Download } from 'lucide-react'
 import { useAIStore } from '../store/aiStore'
 
 function StatCard({
@@ -29,6 +29,8 @@ function StatCard({
   )
 }
 
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+
 export default function Dashboard() {
   const { data: stats, isLoading, error } = useQuery<DashboardStats>({
     queryKey: ['dashboard'],
@@ -40,6 +42,20 @@ export default function Dashboard() {
   const handleAIAnalysis = () => {
     setContext({ stats, page: 'dashboard' })
     openDrawer()
+  }
+
+  const handleExport = async (formato: 'csv' | 'xlsx') => {
+    const token = localStorage.getItem('token')
+    const res = await fetch(`${API_URL}/crm/solicitudes/export?formato=${formato}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `solicitudes.${formato}`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   if (isLoading) {
@@ -60,106 +76,99 @@ export default function Dashboard() {
     )
   }
 
+  const maxForecast = Math.max(...(stats?.forecast_mensual?.map((m) => m.oferta) ?? [1]), 1)
+
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
+    <div className="p-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-500 text-sm mt-1">Vision general del CRM de solicitudes</p>
+          <p className="text-sm text-gray-500 mt-1">Resumen del pipeline comercial</p>
         </div>
-        <button
-          onClick={handleAIAnalysis}
-          className="flex items-center gap-2 px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 transition-colors"
-        >
-          <Bot size={18} />
-          Analisis IA
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => handleExport('csv')}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
+            <Download size={14} /> CSV
+          </button>
+          <button
+            onClick={() => handleExport('xlsx')}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700"
+          >
+            <Download size={14} /> Excel
+          </button>
+          <button
+            onClick={handleAIAnalysis}
+            className="flex items-center gap-2 px-4 py-2 bg-brand-600 text-white rounded-lg hover:bg-brand-700 text-sm font-medium"
+          >
+            <Bot size={16} /> Analizar con IA
+          </button>
+        </div>
       </div>
 
-      {/* Stats grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
-        <StatCard
-          title="Total Solicitudes"
-          value={stats?.total_solicitudes ?? 0}
-          icon={Users}
-          color="bg-blue-500"
-        />
-        <StatCard
-          title="En Estudio"
-          value={stats?.en_estudio ?? 0}
-          icon={BarChart2}
-          color="bg-indigo-500"
-        />
-        <StatCard
-          title="Ofertadas"
-          value={stats?.ofertadas ?? 0}
-          icon={TrendingUp}
-          color="bg-purple-500"
-        />
-        <StatCard
-          title="Ganadas"
-          value={stats?.ganadas ?? 0}
-          icon={Target}
-          color="bg-green-500"
-        />
-        <StatCard
-          title="Perdidas"
-          value={stats?.perdidas ?? 0}
-          icon={BarChart2}
-          color="bg-red-400"
-        />
-        <StatCard
-          title="Tasa Conversion"
-          value={`${((stats?.tasa_conversion ?? 0) * 100).toFixed(1)}%`}
-          icon={DollarSign}
-          color="bg-orange-500"
-        />
+      {/* KPI Cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard title="Total Solicitudes" value={stats?.total_solicitudes ?? 0} icon={BarChart2} color="bg-indigo-500" />
+        <StatCard title="En Estudio" value={stats?.en_estudio ?? 0} icon={TrendingUp} color="bg-blue-500" />
+        <StatCard title="Ofertadas" value={stats?.ofertadas ?? 0} icon={Target} color="bg-amber-500" />
+        <StatCard title="Ganadas" value={stats?.ganadas ?? 0} icon={TrendingUp} color="bg-emerald-500" />
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-          <h2 className="font-semibold text-gray-800 mb-3">Resumen Financiero</h2>
-          <div className="space-y-2">
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-gray-600">Valor total ofertado</span>
-              <span className="font-semibold text-gray-900">
-                ${((stats?.oferta_total ?? 0) / 1000).toFixed(1)}k
-              </span>
-            </div>
-            <div className="flex justify-between items-center">
-              <span className="text-sm text-gray-600">Aging promedio</span>
-              <span className="font-semibold text-gray-900">
-                {Math.round(stats?.aging_promedio ?? 0)} dias
-              </span>
-            </div>
-          </div>
-        </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard title="Tasa Conversion" value={`${((stats?.tasa_conversion ?? 0) * 100).toFixed(1)}%`} icon={Target} color="bg-purple-500" />
+        <StatCard title="Oferta Total" value={`${((stats?.oferta_total ?? 0) / 1000).toFixed(1)}k`} icon={DollarSign} color="bg-teal-500" />
+        <StatCard title="Aging Promedio" value={`${Math.round(stats?.aging_promedio ?? 0)}d`} icon={Clock} color="bg-orange-500" />
+        <StatCard title="Tiempo Medio Cierre" value={`${Math.round(stats?.tiempo_medio_cierre ?? 0)}d`} icon={Clock} color="bg-rose-500" />
+      </div>
 
+      {/* Forecast Mensual */}
+      {stats?.forecast_mensual && stats.forecast_mensual.length > 0 && (
         <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-          <h2 className="font-semibold text-gray-800 mb-3">Estado del Pipeline</h2>
+          <h2 className="text-base font-semibold text-gray-800 mb-4">Forecast mensual — Ganadas (ultimos 6 meses)</h2>
           <div className="space-y-3">
-            {[
-              { label: 'Recibidas', value: (stats?.total_solicitudes ?? 0) - (stats?.en_estudio ?? 0) - (stats?.ofertadas ?? 0) - (stats?.ganadas ?? 0) - (stats?.perdidas ?? 0), color: 'bg-blue-400' },
-              { label: 'En Estudio', value: stats?.en_estudio ?? 0, color: 'bg-indigo-400' },
-              { label: 'Ofertadas', value: stats?.ofertadas ?? 0, color: 'bg-purple-400' },
-              { label: 'Ganadas', value: stats?.ganadas ?? 0, color: 'bg-green-400' },
-              { label: 'Perdidas', value: stats?.perdidas ?? 0, color: 'bg-red-400' },
-            ].map(({ label, value, color }) => (
-              <div key={label} className="flex items-center gap-3">
-                <span className="text-sm text-gray-600 w-28">{label}</span>
-                <div className="flex-1 bg-gray-100 rounded-full h-2">
+            {stats.forecast_mensual.map((m) => (
+              <div key={m.mes} className="flex items-center gap-3">
+                <span className="w-20 text-xs text-gray-500 shrink-0">{m.mes}</span>
+                <div className="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden">
                   <div
-                    className={`${color} h-2 rounded-full`}
-                    style={{
-                      width: `${((value ?? 0) / Math.max(stats?.total_solicitudes ?? 1, 1)) * 100}%`,
-                    }}
+                    className="bg-indigo-500 h-4 rounded-full transition-all"
+                    style={{ width: `${(m.oferta / maxForecast) * 100}%` }}
                   />
                 </div>
-                <span className="text-sm font-medium text-gray-700 w-8 text-right">{value ?? 0}</span>
+                <span className="text-xs font-medium text-gray-700 w-20 text-right">
+                  {m.ganadas} ops / {(m.oferta / 1000).toFixed(1)}k
+                </span>
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Pipeline Estado */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+        <h2 className="text-base font-semibold text-gray-800 mb-4">Estado del Pipeline</h2>
+        <div className="space-y-3">
+          {[
+            { label: 'En Estudio', value: stats?.en_estudio ?? 0, color: 'bg-indigo-400' },
+            { label: 'Ofertadas', value: stats?.ofertadas ?? 0, color: 'bg-amber-400' },
+            { label: 'Ganadas', value: stats?.ganadas ?? 0, color: 'bg-emerald-400' },
+            { label: 'Perdidas', value: stats?.perdidas ?? 0, color: 'bg-red-400' },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center gap-3">
+              <span className="w-24 text-sm text-gray-600">{item.label}</span>
+              <div className="flex-1 bg-gray-100 rounded-full h-3">
+                <div
+                  className={`${item.color} h-3 rounded-full`}
+                  style={{
+                    width: `${stats?.total_solicitudes ? (item.value / stats.total_solicitudes) * 100 : 0}%`,
+                  }}
+                />
+              </div>
+              <span className="text-sm font-medium w-8 text-right">{item.value}</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>

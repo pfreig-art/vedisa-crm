@@ -1,8 +1,11 @@
 """CRM API - Solicitudes, Pipeline, Dashboard con PostgreSQL real."""
+import io
+import csv
 from fastapi import APIRouter, Query, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case, and_
 from app.core.database import get_session
@@ -61,44 +64,42 @@ class PaginatedSolicitudes(BaseModel):
     total: int
     page: int
     page_size: int
-    pages: int
+    total_pages: int
 
 class EstadoUpdate(BaseModel):
     estado: str
+    kanban_column: Optional[str] = None
+    color_estado: Optional[str] = None
 
-# -- Estado meta -------------------------------------------------------
-
-ESTADO_META = {
-    "En Estudio":  {"label": "En Estudio",  "color": "#6366f1"},
-    "Enviada":     {"label": "Pte. Cierre", "color": "#f59e0b"},
-    "Adjudicada":  {"label": "Adjudicada",  "color": "#10b981"},
-    "Rechazada":   {"label": "Rechazada",   "color": "#ef4444"},
-    "Descartada":  {"label": "Descartada",  "color": "#6b7280"},
-}
-
-# -- Endpoints ---------------------------------------------------------
+# -- Endpoints --------------------------------------------------------
 
 @router.get("/solicitudes", response_model=PaginatedSolicitudes)
 async def list_solicitudes(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    estado: Optional[str] = Query(None),
-    comercial: Optional[str] = Query(None),
-    prioridad: Optional[str] = Query(None),
+    estado: Optional[str] = None,
+    comercial: Optional[str] = None,
+    search: Optional[str] = None,
     db: AsyncSession = Depends(get_session),
 ):
     q = select(Solicitud)
+    filters = []
     if estado:
-        q = q.where(Solicitud.estado == estado)
+        filters.append(Solicitud.estado == estado)
     if comercial:
-        q = q.where(Solicitud.comercial == comercial)
-    if prioridad:
-        q = q.where(Solicitud.prioridad == prioridad)
+        filters.append(Solicitud.comercial == comercial)
+    if search:
+        filters.append(
+            Solicitud.nombre_corto.ilike(f"%{search}%")
+            | Solicitud.codigo.ilike(f"%{search}%")
+        )
+    if filters:
+        q = q.where(and_(*filters))
 
     count_q = select(func.count()).select_from(q.subquery())
-    total = (await db.execute(count_q)).scalar_one()
+    total_result = await db.execute(count_q)
+    total = total_result.scalar() or 0
 
-    q = q.order_by(Solicitud.created_at.desc())
     q = q.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(q)
     items = result.scalars().all()
@@ -108,41 +109,81 @@ async def list_solicitudes(
         total=total,
         page=page,
         page_size=page_size,
-        pages=math.ceil(total / page_size) if total else 1,
+        total_pages=math.ceil(total / page_size) if total else 1,
     )
 
-@router.get("/solicitudes/{solicitud_id}", response_model=SolicitudFront)
-async def get_solicitud(
-    solicitud_id: str,
+@router.get("/solicitudes/export")
+async def export_solicitudes(
+    formato: str = Query("csv", regex="^(csv|xlsx)$"),
     db: AsyncSession = Depends(get_session),
 ):
+    """Exporta todas las solicitudes en CSV o Excel."""
+    result = await db.execute(select(Solicitud).order_by(Solicitud.created_at.desc()))
+    rows = result.scalars().all()
+
+    campos = [
+        "codigo", "nombre_corto", "poblacion", "estado", "prioridad",
+        "comercial", "tecnico_estudios", "fecha_solicitud", "fecha_limite",
+        "oferta", "aging_dias", "created_at",
+    ]
+
+    if formato == "xlsx":
+        try:
+            import openpyxl
+        except ImportError:
+            raise HTTPException(status_code=500, detail="openpyxl no instalado")
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Solicitudes"
+        ws.append(campos)
+        for s in rows:
+            ws.append([str(getattr(s, c) or "") for c in campos])
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=solicitudes.xlsx"},
+        )
+    else:
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(campos)
+        for s in rows:
+            writer.writerow([str(getattr(s, c) or "") for c in campos])
+        buf.seek(0)
+        return StreamingResponse(
+            iter([buf.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=solicitudes.csv"},
+        )
+
+@router.get("/solicitudes/{solicitud_id}", response_model=SolicitudFront)
+async def get_solicitud(solicitud_id: str, db: AsyncSession = Depends(get_session)):
     result = await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))
-    sol = result.scalar_one_or_none()
-    if not sol:
+    s = result.scalar_one_or_none()
+    if not s:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
-    return sol
+    return s
 
 @router.get("/solicitudes/{solicitud_id}/context")
-async def get_solicitud_context(
-    solicitud_id: str,
-    db: AsyncSession = Depends(get_session),
-):
+async def get_solicitud_context(solicitud_id: str, db: AsyncSession = Depends(get_session)):
     result = await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))
-    sol = result.scalar_one_or_none()
-    if not sol:
+    s = result.scalar_one_or_none()
+    if not s:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     return {
-        "id": sol.id,
-        "codigo": sol.codigo,
-        "nombre_corto": sol.nombre_corto,
-        "estado": sol.estado,
-        "prioridad": sol.prioridad,
-        "comercial": sol.comercial,
-        "tecnico_estudios": sol.tecnico_estudios,
-        "oferta": sol.oferta,
-        "aging_dias": sol.aging_dias,
-        "observaciones": sol.observaciones,
-        "actuaciones": sol.actuaciones,
+        "solicitud_id": s.id,
+        "codigo": s.codigo,
+        "nombre_corto": s.nombre_corto,
+        "estado": s.estado,
+        "comercial": s.comercial,
+        "oferta": s.oferta,
+        "aging_dias": s.aging_dias,
+        "observaciones": s.observaciones,
+        "contactos": s.contactos,
+        "actuaciones": s.actuaciones,
     }
 
 @router.patch("/solicitudes/{solicitud_id}/estado")
@@ -152,65 +193,95 @@ async def update_estado(
     db: AsyncSession = Depends(get_session),
 ):
     result = await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))
-    sol = result.scalar_one_or_none()
-    if not sol:
+    s = result.scalar_one_or_none()
+    if not s:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
-    if body.estado not in ESTADO_META:
-        raise HTTPException(status_code=400, detail=f"Estado invalido: {body.estado}")
-    sol.estado = body.estado
-    sol.kanban_column = ESTADO_META[body.estado]["label"]
-    sol.color_estado = ESTADO_META[body.estado]["color"]
-    sol.updated_at = datetime.utcnow()
+    s.estado = body.estado
+    if body.kanban_column:
+        s.kanban_column = body.kanban_column
+    if body.color_estado:
+        s.color_estado = body.color_estado
+    s.updated_at = datetime.utcnow()
     await db.commit()
-    await db.refresh(sol)
-    return {"ok": True, "estado": sol.estado}
+    await db.refresh(s)
+    return s
 
-@router.get("/pipeline", response_model=List[PipelineColumn])
+@router.get("/pipeline")
 async def get_pipeline(db: AsyncSession = Depends(get_session)):
-    columns = []
-    for estado, meta in ESTADO_META.items():
-        q = select(Solicitud).where(Solicitud.estado == estado)
-        result = await db.execute(q)
-        items = result.scalars().all()
-        total_oferta = sum(s.oferta or 0 for s in items)
-        columns.append(PipelineColumn(
-            estado=estado,
-            label=meta["label"],
-            color=meta["color"],
-            count=len(items),
-            total_oferta=total_oferta,
-            items=items,
-        ))
-    return columns
+    result = await db.execute(select(Solicitud))
+    all_rows = result.scalars().all()
+    columnas = [
+        {"estado": "En Estudio", "label": "En Estudio", "color": "#6366f1"},
+        {"estado": "Ofertada", "label": "Ofertada", "color": "#f59e0b"},
+        {"estado": "Ganada", "label": "Ganada", "color": "#10b981"},
+        {"estado": "Perdida", "label": "Perdida", "color": "#ef4444"},
+    ]
+    pipeline = []
+    for col in columnas:
+        items = [s for s in all_rows if s.estado == col["estado"]]
+        pipeline.append({
+            "estado": col["estado"],
+            "label": col["label"],
+            "color": col["color"],
+            "count": len(items),
+            "total_oferta": round(sum(s.oferta or 0 for s in items), 2),
+            "items": items,
+        })
+    return pipeline
 
 @router.get("/dashboard")
 async def get_dashboard(db: AsyncSession = Depends(get_session)):
+    """KPIs: conversion, aging, financiero, tiempo_medio, forecast mensual."""
     result = await db.execute(select(Solicitud))
-    seed = result.scalars().all()
+    all_rows = result.scalars().all()
 
-    total = len(seed)
-    en_estudio = sum(1 for s in seed if s.estado == "En Estudio")
-    ofertadas = sum(1 for s in seed if s.estado in ["Enviada", "Pte. Cierre"])
-    ganadas = sum(1 for s in seed if s.estado == "Adjudicada")
-    perdidas = sum(1 for s in seed if s.estado in ["Rechazada", "Descartada"])
-    aging_vals = [s.aging_dias for s in seed if s.aging_dias]
-    aging_prom = round(sum(aging_vals) / len(aging_vals), 1) if aging_vals else 0
-    ofertas = [s.oferta for s in seed if s.oferta]
-    oferta_total = sum(ofertas)
-    adjudicadas_oferta = sum(s.oferta or 0 for s in seed if s.estado == "Adjudicada")
-    rechazadas_oferta = sum(s.oferta or 0 for s in seed if s.estado in ["Rechazada", "Descartada"])
-    tasa = round((adjudicadas_oferta / (adjudicadas_oferta + rechazadas_oferta)) * 100, 1) if (adjudicadas_oferta + rechazadas_oferta) else 0
+    total = len(all_rows)
+    en_estudio = sum(1 for s in all_rows if s.estado == "En Estudio")
+    ofertadas = sum(1 for s in all_rows if s.estado == "Ofertada")
+    ganadas = sum(1 for s in all_rows if s.estado == "Ganada")
+    perdidas = sum(1 for s in all_rows if s.estado == "Perdida")
+    tasa_conversion = round(ganadas / total, 4) if total > 0 else 0.0
+    oferta_total = round(sum(s.oferta or 0 for s in all_rows), 2)
 
-    comerciales_set = set(s.comercial for s in seed if s.comercial)
-    comerciales = [
-        {
-            "nombre": c,
-            "total": sum(1 for s in seed if s.comercial == c),
-            "adjudicadas": sum(1 for s in seed if s.comercial == c and s.estado == "Adjudicada"),
-            "oferta": sum(s.oferta or 0 for s in seed if s.comercial == c),
-        }
-        for c in comerciales_set
-    ]
+    # Tiempo medio de cierre (dias)
+    cerradas = [s for s in all_rows if s.estado in ("Ganada", "Perdida") and s.fecha_solicitud]
+    if cerradas:
+        tiempo_medio = round(
+            sum((date.today() - s.fecha_solicitud).days for s in cerradas) / len(cerradas), 1
+        )
+    else:
+        tiempo_medio = 0.0
+
+    # Aging promedio
+    con_aging = [s for s in all_rows if s.aging_dias is not None]
+    aging_promedio = round(sum(s.aging_dias for s in con_aging) / len(con_aging), 1) if con_aging else 0.0
+
+    # Forecast mensual: ultimos 6 meses
+    hoy = date.today()
+    forecast_meses = []
+    for i in range(5, -1, -1):
+        # Primer dia del mes i meses atras
+        mes = hoy.month - i
+        anio = hoy.year
+        while mes <= 0:
+            mes += 12
+            anio -= 1
+        mes_inicio = date(anio, mes, 1)
+        if mes == 12:
+            mes_fin = date(anio + 1, 1, 1)
+        else:
+            mes_fin = date(anio, mes + 1, 1)
+        ganadas_mes = [
+            s for s in all_rows
+            if s.estado == "Ganada"
+            and s.fecha_solicitud
+            and mes_inicio <= s.fecha_solicitud < mes_fin
+        ]
+        forecast_meses.append({
+            "mes": mes_inicio.strftime("%b %Y"),
+            "ganadas": len(ganadas_mes),
+            "oferta": round(sum(s.oferta or 0 for s in ganadas_mes), 2),
+        })
 
     return {
         "total_solicitudes": total,
@@ -218,17 +289,9 @@ async def get_dashboard(db: AsyncSession = Depends(get_session)):
         "ofertadas": ofertadas,
         "ganadas": ganadas,
         "perdidas": perdidas,
-        "aging_promedio": aging_prom,
-        "tasa_conversion": tasa,
+        "tasa_conversion": tasa_conversion,
         "oferta_total": oferta_total,
-        "pipeline_por_estado": [
-            {
-                "estado": e,
-                "count": sum(1 for s in seed if s.estado == e),
-                "total_oferta": sum(s.oferta or 0 for s in seed if s.estado == e),
-                "color": m["color"]
-            }
-            for e, m in ESTADO_META.items()
-        ],
-        "comerciales": comerciales,
+        "aging_promedio": aging_promedio,
+        "tiempo_medio_cierre": tiempo_medio,
+        "forecast_mensual": forecast_meses,
     }

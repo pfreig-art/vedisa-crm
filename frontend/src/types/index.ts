@@ -33,6 +33,8 @@ export interface DashboardStats {
   aging_promedio: number
   tasa_conversion: number
   oferta_total: number
+    tiempo_medio_cierre: number
+  forecast_mensual: Array<{ mes: string; ganadas: number; oferta: number }>
 }
 
 // AI Types
