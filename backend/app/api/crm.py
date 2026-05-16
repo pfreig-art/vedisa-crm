@@ -9,8 +9,15 @@ from datetime import datetime, date, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, case, and_
 from app.core.database import get_session
-from app.core.models import Solicitud
+from app.core.models import (
+    Solicitud,
+    Usuario,
+    SolicitudContacto,
+    Actuacion,
+    SolicitudActuacion,
+)
 import math
+import uuid as _uuid
 
 router = APIRouter()
 
@@ -42,11 +49,26 @@ class SolicitudItem(BaseModel):
         from_attributes = True
 
 class SolicitudFront(SolicitudItem):
+    # Campos legacy
     estudio_direccion: Optional[str] = None
     presupuesto: Optional[str] = None
     contactos: Optional[str] = None
     actuaciones: Optional[str] = None
     observaciones: Optional[str] = None
+    # Sprint A: direccion / fechas extra
+    tipo_via: Optional[str] = None
+    numero: Optional[str] = None
+    cp: Optional[str] = None
+    fecha_reunion: Optional[date] = None
+    fecha_visita: Optional[date] = None
+    fecha_enviado: Optional[date] = None
+    fecha_cierre_cliente: Optional[date] = None
+    descripcion: Optional[str] = None
+    # Sprint A: financiero extra
+    cobertura_pct: Optional[float] = None
+    coste: Optional[float] = None
+    coeficiente: Optional[float] = None
+    margen_pct: Optional[float] = None
 
     class Config:
         from_attributes = True
@@ -173,17 +195,46 @@ async def get_solicitud_context(solicitud_id: str, db: AsyncSession = Depends(ge
     s = result.scalar_one_or_none()
     if not s:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    # Cargar actuaciones N-N y contactos hijos
+    act_q = (
+        select(Actuacion.nombre)
+        .join(SolicitudActuacion, SolicitudActuacion.actuacion_id == Actuacion.id)
+        .where(SolicitudActuacion.solicitud_id == solicitud_id)
+        .order_by(Actuacion.orden)
+    )
+    actuaciones_norm = [r[0] for r in (await db.execute(act_q)).all()]
+    contactos_q = await db.execute(
+        select(SolicitudContacto).where(SolicitudContacto.solicitud_id == solicitud_id)
+    )
+    contactos_norm = [
+        {"tipo": c.tipo, "nombre": c.nombre, "telefono": c.telefono, "email": c.email}
+        for c in contactos_q.scalars().all()
+    ]
     return {
         "solicitud_id": s.id,
         "codigo": s.codigo,
         "nombre_corto": s.nombre_corto,
+        "poblacion": s.poblacion,
         "estado": s.estado,
+        "prioridad": s.prioridad,
         "comercial": s.comercial,
+        "tecnico_estudios": s.tecnico_estudios,
         "oferta": s.oferta,
+        "cobertura_pct": s.cobertura_pct,
+        "coste": s.coste,
+        "coeficiente": s.coeficiente,
+        "margen_pct": s.margen_pct,
         "aging_dias": s.aging_dias,
+        "fecha_solicitud": s.fecha_solicitud,
+        "fecha_limite": s.fecha_limite,
+        "fecha_reunion": s.fecha_reunion,
+        "fecha_visita": s.fecha_visita,
+        "fecha_enviado": s.fecha_enviado,
+        "fecha_cierre_cliente": s.fecha_cierre_cliente,
+        "descripcion": s.descripcion,
         "observaciones": s.observaciones,
-        "contactos": s.contactos,
-        "actuaciones": s.actuaciones,
+        "contactos": contactos_norm or s.contactos,
+        "actuaciones": actuaciones_norm or s.actuaciones,
     }
 
 @router.patch("/solicitudes/{solicitud_id}/estado")
@@ -318,6 +369,19 @@ class SolicitudCreate(BaseModel):
     observaciones: Optional[str] = None
     contactos: Optional[str] = None
     actuaciones: Optional[str] = None
+    # Sprint A
+    tipo_via: Optional[str] = None
+    numero: Optional[str] = None
+    cp: Optional[str] = None
+    fecha_reunion: Optional[date] = None
+    fecha_visita: Optional[date] = None
+    fecha_enviado: Optional[date] = None
+    fecha_cierre_cliente: Optional[date] = None
+    descripcion: Optional[str] = None
+    cobertura_pct: Optional[float] = None
+    coste: Optional[float] = None
+    coeficiente: Optional[float] = None
+    margen_pct: Optional[float] = None
 
 class SolicitudUpdate(BaseModel):
     nombre_corto: Optional[str] = None
@@ -336,6 +400,19 @@ class SolicitudUpdate(BaseModel):
     observaciones: Optional[str] = None
     contactos: Optional[str] = None
     actuaciones: Optional[str] = None
+    # Sprint A
+    tipo_via: Optional[str] = None
+    numero: Optional[str] = None
+    cp: Optional[str] = None
+    fecha_reunion: Optional[date] = None
+    fecha_visita: Optional[date] = None
+    fecha_enviado: Optional[date] = None
+    fecha_cierre_cliente: Optional[date] = None
+    descripcion: Optional[str] = None
+    cobertura_pct: Optional[float] = None
+    coste: Optional[float] = None
+    coeficiente: Optional[float] = None
+    margen_pct: Optional[float] = None
 
 import uuid
 
@@ -348,27 +425,14 @@ async def create_solicitud(
     now = datetime.utcnow()
     # Auto-generar codigo si no se proporciona
     codigo = body.codigo or f"SOL-{now.year}-{str(uuid.uuid4())[:4].upper()}"
+    data = body.model_dump(exclude_unset=True)
+    data.pop("codigo", None)
     s = Solicitud(
         id=str(uuid.uuid4()),
         codigo=codigo,
-        nombre_corto=body.nombre_corto,
-        poblacion=body.poblacion,
-        estado=body.estado,
-        kanban_column=body.kanban_column,
-        color_estado=body.color_estado,
-        prioridad=body.prioridad,
-        comercial=body.comercial,
-        tecnico_estudios=body.tecnico_estudios,
-        fecha_solicitud=body.fecha_solicitud,
-        fecha_limite=body.fecha_limite,
-        oferta=body.oferta,
-        presupuesto=body.presupuesto,
-        estudio_direccion=body.estudio_direccion,
-        observaciones=body.observaciones,
-        contactos=body.contactos,
-        actuaciones=body.actuaciones,
         aging_dias=0,
         created_at=now,
+        **data,
     )
     db.add(s)
     await db.commit()
@@ -405,3 +469,265 @@ async def delete_solicitud(
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     await db.delete(s)
     await db.commit()
+
+
+# =====================================================================
+# Sprint A: Contactos por solicitud
+# =====================================================================
+
+CONTACTO_TIPOS = {
+    "administracion", "tecnico_obra", "ensena_obra",
+    "presidente", "propiedad", "otro",
+}
+
+
+class ContactoCreate(BaseModel):
+    tipo: str
+    nombre: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    notas: Optional[str] = None
+
+
+class ContactoUpdate(BaseModel):
+    tipo: Optional[str] = None
+    nombre: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    notas: Optional[str] = None
+
+
+class ContactoOut(BaseModel):
+    id: str
+    solicitud_id: str
+    tipo: str
+    nombre: Optional[str] = None
+    telefono: Optional[str] = None
+    email: Optional[str] = None
+    notas: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/solicitudes/{solicitud_id}/contactos", response_model=List[ContactoOut])
+async def list_contactos(solicitud_id: str, db: AsyncSession = Depends(get_session)):
+    result = await db.execute(
+        select(SolicitudContacto).where(SolicitudContacto.solicitud_id == solicitud_id)
+    )
+    return result.scalars().all()
+
+
+@router.post("/solicitudes/{solicitud_id}/contactos", response_model=ContactoOut, status_code=201)
+async def create_contacto(
+    solicitud_id: str,
+    body: ContactoCreate,
+    db: AsyncSession = Depends(get_session),
+):
+    if body.tipo not in CONTACTO_TIPOS:
+        raise HTTPException(status_code=422, detail=f"tipo invalido. Valores: {sorted(CONTACTO_TIPOS)}")
+    # Verificar que existe la solicitud
+    sol = (await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))).scalar_one_or_none()
+    if not sol:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    c = SolicitudContacto(
+        id=str(_uuid.uuid4()),
+        solicitud_id=solicitud_id,
+        tipo=body.tipo,
+        nombre=body.nombre,
+        telefono=body.telefono,
+        email=body.email,
+        notas=body.notas,
+        created_at=datetime.utcnow(),
+    )
+    db.add(c)
+    await db.commit()
+    await db.refresh(c)
+    return c
+
+
+@router.put("/contactos/{contacto_id}", response_model=ContactoOut)
+async def update_contacto(
+    contacto_id: str,
+    body: ContactoUpdate,
+    db: AsyncSession = Depends(get_session),
+):
+    c = (await db.execute(select(SolicitudContacto).where(SolicitudContacto.id == contacto_id))).scalar_one_or_none()
+    if not c:
+        raise HTTPException(status_code=404, detail="Contacto no encontrado")
+    data = body.model_dump(exclude_unset=True)
+    if "tipo" in data and data["tipo"] not in CONTACTO_TIPOS:
+        raise HTTPException(status_code=422, detail="tipo invalido")
+    for k, v in data.items():
+        setattr(c, k, v)
+    c.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(c)
+    return c
+
+
+@router.delete("/contactos/{contacto_id}", status_code=204)
+async def delete_contacto(contacto_id: str, db: AsyncSession = Depends(get_session)):
+    c = (await db.execute(select(SolicitudContacto).where(SolicitudContacto.id == contacto_id))).scalar_one_or_none()
+    if not c:
+        raise HTTPException(status_code=404, detail="Contacto no encontrado")
+    await db.delete(c)
+    await db.commit()
+
+
+# =====================================================================
+# Sprint A: Catalogo de actuaciones y asignacion N-N
+# =====================================================================
+
+class ActuacionOut(BaseModel):
+    id: str
+    nombre: str
+    orden: int
+    activo: bool
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/actuaciones", response_model=List[ActuacionOut])
+async def list_actuaciones(db: AsyncSession = Depends(get_session)):
+    """Catalogo maestro de actuaciones (las 15 del mockup)."""
+    result = await db.execute(
+        select(Actuacion).where(Actuacion.activo == True).order_by(Actuacion.orden)
+    )
+    return result.scalars().all()
+
+
+@router.get("/solicitudes/{solicitud_id}/actuaciones", response_model=List[ActuacionOut])
+async def list_solicitud_actuaciones(solicitud_id: str, db: AsyncSession = Depends(get_session)):
+    """Actuaciones asignadas a una solicitud."""
+    q = (
+        select(Actuacion)
+        .join(SolicitudActuacion, SolicitudActuacion.actuacion_id == Actuacion.id)
+        .where(SolicitudActuacion.solicitud_id == solicitud_id)
+        .order_by(Actuacion.orden)
+    )
+    result = await db.execute(q)
+    return result.scalars().all()
+
+
+class ActuacionAssignBody(BaseModel):
+    actuacion_ids: List[str]
+
+
+@router.put("/solicitudes/{solicitud_id}/actuaciones")
+async def set_solicitud_actuaciones(
+    solicitud_id: str,
+    body: ActuacionAssignBody,
+    db: AsyncSession = Depends(get_session),
+):
+    """Reemplaza el set completo de actuaciones de una solicitud."""
+    sol = (await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))).scalar_one_or_none()
+    if not sol:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+
+    # Validar que todos los ids existen en el catalogo
+    if body.actuacion_ids:
+        existentes = await db.execute(
+            select(Actuacion.id).where(Actuacion.id.in_(body.actuacion_ids))
+        )
+        existentes_set = {row[0] for row in existentes.all()}
+        invalidas = set(body.actuacion_ids) - existentes_set
+        if invalidas:
+            raise HTTPException(status_code=422, detail=f"Actuaciones no validas: {sorted(invalidas)}")
+
+    # Borrar las existentes
+    actuales = await db.execute(
+        select(SolicitudActuacion).where(SolicitudActuacion.solicitud_id == solicitud_id)
+    )
+    for sa_row in actuales.scalars().all():
+        await db.delete(sa_row)
+    await db.flush()
+
+    # Insertar las nuevas
+    for aid in body.actuacion_ids:
+        db.add(SolicitudActuacion(
+            solicitud_id=solicitud_id,
+            actuacion_id=aid,
+            created_at=datetime.utcnow(),
+        ))
+    await db.commit()
+    return {"solicitud_id": solicitud_id, "actuaciones": body.actuacion_ids}
+
+
+# =====================================================================
+# Sprint A: Usuarios (lectura + actualizacion de metadatos)
+# =====================================================================
+
+class UsuarioOut(BaseModel):
+    id: str
+    email: str
+    nombre: str
+    rol: str
+    activo: bool
+    equipo: Optional[str] = None
+    iniciales: Optional[str] = None
+    color: Optional[str] = None
+    cargo: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class UsuarioUpdate(BaseModel):
+    nombre: Optional[str] = None
+    rol: Optional[str] = None
+    activo: Optional[bool] = None
+    equipo: Optional[str] = None
+    iniciales: Optional[str] = None
+    color: Optional[str] = None
+    cargo: Optional[str] = None
+
+
+USUARIO_EQUIPOS = {"comercial", "estudios", "direccion", "administracion"}
+
+
+@router.get("/usuarios", response_model=List[UsuarioOut])
+async def list_usuarios(
+    activo: Optional[bool] = None,
+    equipo: Optional[str] = None,
+    db: AsyncSession = Depends(get_session),
+):
+    """Lista usuarios. Util para selects de comercial/tecnico en el frontend."""
+    q = select(Usuario)
+    if activo is not None:
+        q = q.where(Usuario.activo == activo)
+    if equipo:
+        q = q.where(Usuario.equipo == equipo)
+    q = q.order_by(Usuario.nombre)
+    result = await db.execute(q)
+    return result.scalars().all()
+
+
+@router.get("/usuarios/{usuario_id}", response_model=UsuarioOut)
+async def get_usuario(usuario_id: str, db: AsyncSession = Depends(get_session)):
+    u = (await db.execute(select(Usuario).where(Usuario.id == usuario_id))).scalar_one_or_none()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    return u
+
+
+@router.patch("/usuarios/{usuario_id}", response_model=UsuarioOut)
+async def update_usuario(
+    usuario_id: str,
+    body: UsuarioUpdate,
+    db: AsyncSession = Depends(get_session),
+):
+    """Actualiza metadatos (equipo, iniciales, color, cargo, activo). No toca password."""
+    u = (await db.execute(select(Usuario).where(Usuario.id == usuario_id))).scalar_one_or_none()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    data = body.model_dump(exclude_unset=True)
+    if "equipo" in data and data["equipo"] is not None and data["equipo"] not in USUARIO_EQUIPOS:
+        raise HTTPException(status_code=422, detail=f"equipo invalido. Valores: {sorted(USUARIO_EQUIPOS)}")
+    for k, v in data.items():
+        setattr(u, k, v)
+    u.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(u)
+    return u
