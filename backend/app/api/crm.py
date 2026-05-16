@@ -53,6 +53,10 @@ class SolicitudItem(BaseModel):
     fecha_limite: Optional[date] = None
     aging_dias: Optional[int] = None
     oferta: Optional[float] = None
+    coste: Optional[float] = None
+    cobertura_pct: Optional[float] = None
+    coeficiente: Optional[float] = None
+    margen_pct: Optional[float] = None
     dias_a_limite: Optional[int] = None
 
     class Config:
