@@ -296,3 +296,112 @@ async def get_dashboard(db: AsyncSession = Depends(get_session)):
         "forecast_mensual": forecast_meses,
     }
 
+
+
+# -- CRUD completo --------------------------------------------------
+
+class SolicitudCreate(BaseModel):
+    nombre_corto: str
+    codigo: Optional[str] = None
+    poblacion: Optional[str] = None
+    estado: str = "En Estudio"
+    kanban_column: str = "En Estudio"
+    color_estado: str = "#6366f1"
+    prioridad: str = "media"
+    comercial: Optional[str] = None
+    tecnico_estudios: Optional[str] = None
+    fecha_solicitud: Optional[date] = None
+    fecha_limite: Optional[date] = None
+    oferta: Optional[float] = None
+    presupuesto: Optional[str] = None
+    estudio_direccion: Optional[str] = None
+    observaciones: Optional[str] = None
+    contactos: Optional[str] = None
+    actuaciones: Optional[str] = None
+
+class SolicitudUpdate(BaseModel):
+    nombre_corto: Optional[str] = None
+    poblacion: Optional[str] = None
+    estado: Optional[str] = None
+    kanban_column: Optional[str] = None
+    color_estado: Optional[str] = None
+    prioridad: Optional[str] = None
+    comercial: Optional[str] = None
+    tecnico_estudios: Optional[str] = None
+    fecha_solicitud: Optional[date] = None
+    fecha_limite: Optional[date] = None
+    oferta: Optional[float] = None
+    presupuesto: Optional[str] = None
+    estudio_direccion: Optional[str] = None
+    observaciones: Optional[str] = None
+    contactos: Optional[str] = None
+    actuaciones: Optional[str] = None
+
+import uuid
+
+@router.post("/solicitudes", status_code=201)
+async def create_solicitud(
+    body: SolicitudCreate,
+    db: AsyncSession = Depends(get_session),
+):
+    """Crea una nueva solicitud."""
+    now = datetime.utcnow()
+    # Auto-generar codigo si no se proporciona
+    codigo = body.codigo or f"SOL-{now.year}-{str(uuid.uuid4())[:4].upper()}"
+    s = Solicitud(
+        id=str(uuid.uuid4()),
+        codigo=codigo,
+        nombre_corto=body.nombre_corto,
+        poblacion=body.poblacion,
+        estado=body.estado,
+        kanban_column=body.kanban_column,
+        color_estado=body.color_estado,
+        prioridad=body.prioridad,
+        comercial=body.comercial,
+        tecnico_estudios=body.tecnico_estudios,
+        fecha_solicitud=body.fecha_solicitud,
+        fecha_limite=body.fecha_limite,
+        oferta=body.oferta,
+        presupuesto=body.presupuesto,
+        estudio_direccion=body.estudio_direccion,
+        observaciones=body.observaciones,
+        contactos=body.contactos,
+        actuaciones=body.actuaciones,
+        aging_dias=0,
+        created_at=now,
+    )
+    db.add(s)
+    await db.commit()
+    await db.refresh(s)
+    return s
+
+@router.put("/solicitudes/{solicitud_id}")
+async def update_solicitud(
+    solicitud_id: str,
+    body: SolicitudUpdate,
+    db: AsyncSession = Depends(get_session),
+):
+    """Actualiza cualquier campo de una solicitud."""
+    result = await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))
+    s = result.scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(s, field, value)
+    s.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(s)
+    return s
+
+@router.delete("/solicitudes/{solicitud_id}", status_code=204)
+async def delete_solicitud(
+    solicitud_id: str,
+    db: AsyncSession = Depends(get_session),
+):
+    """Elimina una solicitud."""
+    result = await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))
+    s = result.scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    await db.delete(s)
+    await db.commit()
