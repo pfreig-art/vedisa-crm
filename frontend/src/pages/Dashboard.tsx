@@ -305,7 +305,9 @@ export default function Dashboard() {
             <h2 className="mb-1 text-lg font-semibold text-white">Mix de actuaciones</h2>
             <p className="mb-4 text-sm text-slate-400">Tipos mas frecuentes en el portfolio</p>
             {donutActuaciones.length === 0 ? (
-              <div className="flex h-[200px] items-center justify-center text-sm text-slate-500">Sin datos</div>
+              <div className="flex h-[200px] items-center justify-center text-center text-sm text-slate-500 px-4">
+                Aun no hay actuaciones asignadas a solicitudes
+              </div>
             ) : (
               <div className="flex items-center gap-4">
                 <ResponsiveContainer width={160} height={160}>
