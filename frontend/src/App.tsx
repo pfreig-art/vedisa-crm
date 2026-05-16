@@ -2,13 +2,15 @@ import { Routes, Route, NavLink } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Contacts from './pages/Contacts';
 import SettingsPage from './pages/Settings';
+import PipelineBoard from './pages/PipelineBoard';
 import { useAIStore } from './store/aiStore';
 import AIDrawer from './components/AIDrawer';
-import { LayoutDashboard, Users, Settings, Bot } from 'lucide-react';
+import { LayoutDashboard, Users, Settings, Bot, Zap } from 'lucide-react';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/contacts', label: 'Contactos', icon: Users },
+  { to: '/pipeline', label: 'Pipeline', icon: Zap },
   { to: '/settings', label: 'Configuracion IA', icon: Settings },
 ];
 
@@ -43,7 +45,7 @@ export default function App() {
           ))}
         </nav>
         <div className="p-4 border-t border-gray-700 text-xs text-gray-500">
-          v0.1.0 &mdash; Multi-LLM CRM
+          v0.1.0 &ndash; Multi-LLM CRM
         </div>
       </aside>
 
@@ -52,6 +54,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/contacts" element={<Contacts />} />
+          <Route path="/pipeline" element={<PipelineBoard />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>

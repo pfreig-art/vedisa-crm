@@ -122,4 +122,40 @@ export const crmApi = {
     const { data } = await apiClient.get<DashboardStats>('/crm/dashboard');
     return data;
   },
+
+
+  // CRUD completo
+  async createSolicitud(body: SolicitudCreate): Promise<SolicitudFront> {
+    const { data } = await apiClient.post<SolicitudFront>('/crm/solicitudes', body)
+    return data
+  },
+
+  async updateSolicitud(id: string, body: SolicitudUpdate): Promise<SolicitudFront> {
+    const { data } = await apiClient.put<SolicitudFront>(`/crm/solicitudes/${id}`, body)
+    return data
+  },
+
+  async deleteSolicitud(id: string): Promise<void> {
+    await apiClient.delete(`/crm/solicitudes/${id}`)
+  },
 };
+
+export interface SolicitudCreate {
+  nombre_corto: string
+  codigo?: string
+  poblacion?: string
+  estado?: string
+  prioridad?: string
+  comercial?: string
+  tecnico_estudios?: string
+  fecha_solicitud?: string
+  fecha_limite?: string
+  oferta?: number
+  presupuesto?: string
+  estudio_direccion?: string
+  observaciones?: string
+  contactos?: string
+  actuaciones?: string
+}
+
+export type SolicitudUpdate = Partial<SolicitudCreate>
