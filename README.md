@@ -193,6 +193,21 @@ npm install
 npm run dev
 ```
 
+## Despliegue
+
+Para desplegar en Windows Server con IIS + ARR y backend como Windows Service nativo, ver:
+
+- [docs/DEPLOY.md](docs/DEPLOY.md) — instalacion desde cero (prerequisitos, scripts PowerShell, verificacion)
+- [docs/MIGRATION_PROD.md](docs/MIGRATION_PROD.md) — migracion de datos y aislamiento con otro CRM en el mismo Postgres
+
+Stack de produccion:
+
+- Reverse proxy: IIS + URL Rewrite + Application Request Routing (ARR)
+- Backend: Windows Service nativo `VedisaCRM-Backend` (sc.exe), uvicorn en `127.0.0.1:8081`
+- Frontend: build estatico `frontend\dist\` servido por IIS
+- Backups: Scheduled Task diaria con `pg_dump` y rotacion de 7 dias
+- TLS: HTTP plano (intranet)
+
 ## Roadmap piloto
 
 - [x] Repositorio base y estructura
