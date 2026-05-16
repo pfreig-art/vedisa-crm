@@ -83,6 +83,8 @@ class SolicitudFront(SolicitudItem):
     coste: Optional[float] = None
     coeficiente: Optional[float] = None
     margen_pct: Optional[float] = None
+    # Sprint D bloque C: lineas de actuacion con m2 / importe.
+    actuaciones_asignadas: List[dict] = []
 
     class Config:
         from_attributes = True
@@ -313,6 +315,23 @@ async def get_solicitud(solicitud_id: str, db: AsyncSession = Depends(get_sessio
     if not s:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
     d = _solicitud_to_front(s)
+
+    # Lineas de actuaciones (Sprint D bloque C).
+    act_q = await db.execute(
+        select(SolicitudActuacion, Actuacion)
+        .join(Actuacion, Actuacion.id == SolicitudActuacion.actuacion_id)
+        .where(SolicitudActuacion.solicitud_id == solicitud_id)
+        .order_by(Actuacion.orden)
+    )
+    d["actuaciones_asignadas"] = [
+        {
+            "actuacion_id": sa.actuacion_id,
+            "actuacion_nombre": ac.nombre,
+            "m2": sa.m2,
+            "importe": sa.importe,
+        }
+        for sa, ac in act_q.all()
+    ]
     return SolicitudFront(**{k: d[k] for k in SolicitudFront.model_fields if k in d})
 
 @router.get("/solicitudes/{solicitud_id}/context")
@@ -524,12 +543,22 @@ async def get_dashboard_extended(db: AsyncSession = Depends(get_session)):
                 "oferta_total": round(comercial_totales[uid], 2),
             })
 
-    # Mix actuaciones (todas las solicitudes)
+    # Mix actuaciones: top 5 por count en solicitudes de los ultimos 12 meses
+    # (filtradas por fecha_solicitud); si no hay fecha se incluye igual para
+    # no perder datos historicos sin fecha.
+    desde_12m = date(hoy.year - 1, hoy.month, 1)
     act_result = await db.execute(
         select(SolicitudActuacion.actuacion_id, func.count().label("cnt"))
+        .join(Solicitud, Solicitud.id == SolicitudActuacion.solicitud_id)
+        .where(
+            or_(
+                Solicitud.fecha_solicitud.is_(None),
+                Solicitud.fecha_solicitud >= desde_12m,
+            )
+        )
         .group_by(SolicitudActuacion.actuacion_id)
         .order_by(func.count().desc())
-        .limit(10)
+        .limit(5)
     )
     act_rows = act_result.all()
     actuacion_ids = [r[0] for r in act_rows]
@@ -993,21 +1022,58 @@ async def list_actuaciones(db: AsyncSession = Depends(get_session)):
     return result.scalars().all()
 
 
-@router.get("/solicitudes/{solicitud_id}/actuaciones", response_model=List[ActuacionOut])
-async def list_solicitud_actuaciones(solicitud_id: str, db: AsyncSession = Depends(get_session)):
-    """Actuaciones asignadas a una solicitud."""
+class SolicitudActuacionOut(BaseModel):
+    """Representacion de una actuacion asignada a una solicitud."""
+    actuacion_id: str
+    actuacion_nombre: str
+    m2: Optional[float] = None
+    importe: Optional[float] = None
+
+
+@router.get(
+    "/solicitudes/{solicitud_id}/actuaciones",
+    response_model=List[SolicitudActuacionOut],
+)
+async def list_solicitud_actuaciones(
+    solicitud_id: str, db: AsyncSession = Depends(get_session)
+):
+    """Actuaciones asignadas a una solicitud con m2/importe por linea."""
     q = (
-        select(Actuacion)
-        .join(SolicitudActuacion, SolicitudActuacion.actuacion_id == Actuacion.id)
+        select(SolicitudActuacion, Actuacion)
+        .join(Actuacion, Actuacion.id == SolicitudActuacion.actuacion_id)
         .where(SolicitudActuacion.solicitud_id == solicitud_id)
         .order_by(Actuacion.orden)
     )
     result = await db.execute(q)
-    return result.scalars().all()
+    return [
+        SolicitudActuacionOut(
+            actuacion_id=sa.actuacion_id,
+            actuacion_nombre=ac.nombre,
+            m2=sa.m2,
+            importe=sa.importe,
+        )
+        for sa, ac in result.all()
+    ]
+
+
+class ActuacionLineaIn(BaseModel):
+    actuacion_id: str
+    m2: Optional[float] = None
+    importe: Optional[float] = None
 
 
 class ActuacionAssignBody(BaseModel):
-    actuacion_ids: List[str]
+    """Cuerpo del PUT. Acepta el formato nuevo (lineas con m2/importe) o el
+    legacy (lista plana de ids) para no romper integraciones existentes."""
+    actuaciones: Optional[List[ActuacionLineaIn]] = None
+    actuacion_ids: Optional[List[str]] = None
+
+    def normalizar(self) -> List[ActuacionLineaIn]:
+        if self.actuaciones is not None:
+            return self.actuaciones
+        if self.actuacion_ids is not None:
+            return [ActuacionLineaIn(actuacion_id=a) for a in self.actuacion_ids]
+        return []
 
 
 @router.put("/solicitudes/{solicitud_id}/actuaciones")
@@ -1015,39 +1081,248 @@ async def set_solicitud_actuaciones(
     solicitud_id: str,
     body: ActuacionAssignBody,
     db: AsyncSession = Depends(get_session),
+    current_user: Optional[Usuario] = Depends(get_current_user),
 ):
-    """Reemplaza el set completo de actuaciones de una solicitud."""
-    sol = (await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))).scalar_one_or_none()
+    """Upsert del set completo de actuaciones de una solicitud.
+
+    Acepta tanto el formato nuevo `{actuaciones: [{actuacion_id, m2, importe}]}`
+    como el legacy `{actuacion_ids: [...]}` para retrocompatibilidad. Registra
+    el cambio en audit_log con accion='actuaciones_update'.
+    """
+    import json as _json
+
+    sol = (
+        await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))
+    ).scalar_one_or_none()
     if not sol:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
 
-    # Validar que todos los ids existen en el catalogo
-    if body.actuacion_ids:
-        existentes = await db.execute(
-            select(Actuacion.id).where(Actuacion.id.in_(body.actuacion_ids))
-        )
-        existentes_set = {row[0] for row in existentes.all()}
-        invalidas = set(body.actuacion_ids) - existentes_set
-        if invalidas:
-            raise HTTPException(status_code=422, detail=f"Actuaciones no validas: {sorted(invalidas)}")
+    lineas = body.normalizar()
+    ids_pedidos = [linea.actuacion_id for linea in lineas]
 
-    # Borrar las existentes
-    actuales = await db.execute(
-        select(SolicitudActuacion).where(SolicitudActuacion.solicitud_id == solicitud_id)
+    if ids_pedidos:
+        existentes = await db.execute(
+            select(Actuacion.id, Actuacion.nombre).where(
+                Actuacion.id.in_(ids_pedidos)
+            )
+        )
+        rows = existentes.all()
+        nombres_catalogo = {row[0]: row[1] for row in rows}
+        invalidas = set(ids_pedidos) - set(nombres_catalogo.keys())
+        if invalidas:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Actuaciones no validas: {sorted(invalidas)}",
+            )
+    else:
+        nombres_catalogo = {}
+
+    # Estado anterior (para audit log) con nombres del catalogo.
+    previo_q = await db.execute(
+        select(SolicitudActuacion, Actuacion)
+        .join(Actuacion, Actuacion.id == SolicitudActuacion.actuacion_id)
+        .where(SolicitudActuacion.solicitud_id == solicitud_id)
     )
-    for sa_row in actuales.scalars().all():
-        await db.delete(sa_row)
+    previo_rows = previo_q.all()
+    anterior_resumen = [
+        {
+            "actuacion_id": sa.actuacion_id,
+            "nombre": ac.nombre,
+            "m2": sa.m2,
+            "importe": sa.importe,
+        }
+        for sa, ac in previo_rows
+    ]
+
+    # Upsert: borra las que ya no estan, inserta/actualiza las pedidas.
+    previas_map = {sa.actuacion_id: sa for sa, _ in previo_rows}
+    ids_pedidos_set = set(ids_pedidos)
+    ids_previos_set = set(previas_map.keys())
+
+    # Borrar las que sobran.
+    for aid_borrar in ids_previos_set - ids_pedidos_set:
+        await db.delete(previas_map[aid_borrar])
+
+    # Insertar o actualizar las pedidas.
+    for linea in lineas:
+        prev = previas_map.get(linea.actuacion_id)
+        if prev is not None:
+            prev.m2 = linea.m2
+            prev.importe = linea.importe
+            db.add(prev)
+        else:
+            db.add(
+                SolicitudActuacion(
+                    solicitud_id=solicitud_id,
+                    actuacion_id=linea.actuacion_id,
+                    m2=linea.m2,
+                    importe=linea.importe,
+                    created_at=datetime.utcnow(),
+                )
+            )
+
     await db.flush()
 
-    # Insertar las nuevas
-    for aid in body.actuacion_ids:
-        db.add(SolicitudActuacion(
-            solicitud_id=solicitud_id,
-            actuacion_id=aid,
-            created_at=datetime.utcnow(),
-        ))
+    nuevo_resumen = [
+        {
+            "actuacion_id": linea.actuacion_id,
+            "nombre": nombres_catalogo.get(linea.actuacion_id, linea.actuacion_id),
+            "m2": linea.m2,
+            "importe": linea.importe,
+        }
+        for linea in lineas
+    ]
+
+    # Auditoria: una sola fila con accion='actuaciones_update'.
+    if anterior_resumen != nuevo_resumen:
+        from app.core.models import AuditLog as _AuditLog
+        import uuid as _uuid
+
+        db.add(
+            _AuditLog(
+                id=str(_uuid.uuid4()),
+                solicitud_id=solicitud_id,
+                usuario_id=current_user.id if current_user else None,
+                accion="actuaciones_update",
+                campo="actuaciones",
+                valor_anterior=_json.dumps(anterior_resumen, default=str),
+                valor_nuevo=_json.dumps(nuevo_resumen, default=str),
+                created_at=datetime.utcnow(),
+            )
+        )
+
     await db.commit()
-    return {"solicitud_id": solicitud_id, "actuaciones": body.actuacion_ids}
+    return {
+        "solicitud_id": solicitud_id,
+        "actuaciones": nuevo_resumen,
+    }
+
+
+# =====================================================================
+# Sprint D bloque C: PDF de oferta
+# =====================================================================
+
+_ESTADOS_OFERTA_PDF = {"Enviada", "Adjudicada"}
+
+
+@router.get("/solicitudes/{solicitud_id}/oferta.pdf")
+async def descargar_oferta_pdf(
+    solicitud_id: str,
+    db: AsyncSession = Depends(get_session),
+    current_user: Usuario = Depends(get_current_user),
+):
+    """Genera y descarga el PDF de oferta de una solicitud.
+
+    Solo disponible si la solicitud esta en estado 'Enviada' o 'Adjudicada'.
+    """
+    from fastapi import Response
+    from app.services.pdf_oferta import generar_pdf_oferta
+
+    s = (
+        await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))
+    ).scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+    if s.estado not in _ESTADOS_OFERTA_PDF:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"La oferta PDF solo se puede generar en estados "
+                f"{sorted(_ESTADOS_OFERTA_PDF)}; estado actual: {s.estado}"
+            ),
+        )
+
+    actuaciones_q = await db.execute(
+        select(SolicitudActuacion, Actuacion.nombre)
+        .join(Actuacion, Actuacion.id == SolicitudActuacion.actuacion_id)
+        .where(SolicitudActuacion.solicitud_id == solicitud_id)
+        .order_by(Actuacion.orden)
+    )
+    actuaciones = [(sa, nombre) for sa, nombre in actuaciones_q.all()]
+
+    pdf_bytes = generar_pdf_oferta(s, actuaciones, current_user)
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="oferta_{s.codigo}.pdf"',
+        },
+    )
+
+
+# =====================================================================
+# Sprint D bloque C: Recordatorios mailto para admin
+# =====================================================================
+
+
+@router.get("/alertas/recordatorio/{solicitud_id}")
+async def alerta_recordatorio_mailto(
+    solicitud_id: str,
+    db: AsyncSession = Depends(get_session),
+    current_user: Usuario = Depends(require_role("admin")),
+):
+    """Devuelve asunto, cuerpo y mailto_url prerellenado para un recordatorio.
+
+    El admin abre su cliente de correo con `window.location.href = mailto_url`
+    y elige el destinatario. No se envia nada desde el servidor.
+    """
+    import os
+    import urllib.parse as _urlparse
+
+    s = (
+        await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))
+    ).scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+
+    hoy = date.today()
+    dias = (
+        (s.fecha_limite - hoy).days if s.fecha_limite else None
+    )
+    if dias is None:
+        situacion = "sin fecha limite asignada"
+        asunto = f"[Vedisa] Recordatorio: {s.codigo}"
+    elif dias < 0:
+        situacion = f"vencida hace {abs(dias)} dias"
+        asunto = f"[Vedisa] Recordatorio: {s.codigo} vencida hace {abs(dias)} dias"
+    else:
+        situacion = f"vence en {dias} dias"
+        asunto = f"[Vedisa] Recordatorio: {s.codigo} vence en {dias} dias"
+
+    public_url = os.environ.get("APP_PUBLIC_URL", "http://localhost").rstrip("/")
+    enlace = f"{public_url}/?solicitud={s.id}"
+
+    cuerpo_lineas = [
+        "Hola,",
+        "",
+        "Te escribo para recordarte el estado de la siguiente solicitud:",
+        "",
+        f"  Codigo: {s.codigo}",
+        f"  Nombre: {s.nombre_corto}",
+        f"  Estado: {s.estado}",
+        f"  Fecha limite: {s.fecha_limite.isoformat() if s.fecha_limite else '-'}",
+        f"  Situacion: {situacion}",
+        "",
+        f"Detalle en el CRM: {enlace}",
+        "",
+        "Gracias,",
+        f"{current_user.nombre}",
+    ]
+    cuerpo = "\n".join(cuerpo_lineas)
+
+    mailto_url = (
+        "mailto:?"
+        f"subject={_urlparse.quote(asunto)}"
+        f"&body={_urlparse.quote(cuerpo)}"
+    )
+
+    return {
+        "asunto": asunto,
+        "cuerpo": cuerpo,
+        "mailto_url": mailto_url,
+        "dias_a_limite": dias,
+    }
 
 
 # =====================================================================
