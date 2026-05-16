@@ -1,8 +1,16 @@
-"""JWT Authentication utilities for Vedisa CRM."""
+"""JWT Authentication utilities for Vedisa CRM.
+
+Usamos bcrypt directamente (no passlib): passlib 1.7.4 es incompatible con
+bcrypt >= 4.1 porque sus checks internos (detect_wrap_bug) generan una
+password sintetica > 72 bytes al cargar el backend, lo que dispara
+ValueError en bcrypt moderno. Como solo necesitamos hash + verify, llamar
+a bcrypt directo es mas simple y robusto.
+"""
 from datetime import datetime, timedelta
 from typing import Optional
+
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,18 +19,18 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.core.models import Usuario
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
 # bcrypt >= 4.1 lanza ValueError si la password supera 72 bytes; antes
-# truncaba silenciosamente. Centralizamos el truncado para que el resto
-# del codigo no tenga que preocuparse y para no cambiar el comportamiento
-# observable (passwords largas seguian funcionando con sus primeros 72
-# bytes en versiones anteriores).
+# truncaba silenciosamente. Centralizamos el truncado para mantener el
+# comportamiento observable: passwords largas siguen funcionando usando
+# sus primeros 72 bytes.
 BCRYPT_MAX_BYTES = 72
 
 
 def _bcrypt_safe(password: str) -> str:
+    """Devuelve la password recortada a 72 bytes UTF-8 (firma str->str para
+    retrocompatibilidad con tests e imports existentes)."""
     if password is None:
         return ""
     encoded = password.encode("utf-8")
@@ -31,20 +39,27 @@ def _bcrypt_safe(password: str) -> str:
     return encoded[:BCRYPT_MAX_BYTES].decode("utf-8", errors="ignore")
 
 
+def _bcrypt_safe_bytes(password: str) -> bytes:
+    """Variante interna que devuelve bytes listos para bcrypt."""
+    if not password:
+        return b""
+    return password.encode("utf-8")[:BCRYPT_MAX_BYTES]
+
+
 def verify_password(plain: str, hashed: str) -> bool:
     if not plain or not hashed:
         return False
     try:
-        return pwd_context.verify(_bcrypt_safe(plain), hashed)
+        return bcrypt.checkpw(_bcrypt_safe_bytes(plain), hashed.encode("utf-8"))
     except (ValueError, TypeError):
-        # Hash corrupto, plataforma incompatible con bcrypt o input no
-        # codificable. No tiene sentido devolver 500 al cliente: tratamos
-        # como credencial invalida.
+        # Hash corrupto, plataforma incompatible o input no codificable.
+        # No tiene sentido devolver 500 al cliente: tratamos como
+        # credencial invalida.
         return False
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(_bcrypt_safe(password))
+    return bcrypt.hashpw(_bcrypt_safe_bytes(password), bcrypt.gensalt()).decode("utf-8")
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
