@@ -1,183 +1,164 @@
-import { useState, useEffect, useRef } from 'react'
+import { useMemo, useState } from 'react'
+import { X, Bot, Send, Loader2 } from 'lucide-react'
 import { useAIStore } from '../store/aiStore'
-import { X, Send, Bot, User, Trash2, ChevronDown } from 'lucide-react'
+import llmApi from '../api/llm'
+
+type ChatMessage = {
+  role: 'user' | 'assistant'
+  content: string
+}
 
 export default function AIDrawer() {
-  const {
-    isOpen,
-    closeDrawer,
-    messages,
-    isLoading,
-    providers,
-    selectedProvider,
-    setProvider,
-    sendMessage,
-    clearMessages,
-    fetchProviders,
-  } = useAIStore()
-
+  const { isOpen, title, context, closeDrawer } = useAIStore()
   const [input, setInput] = useState('')
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [isLoading, setIsLoading] = useState(false)
 
-  useEffect(() => {
-    if (isOpen && providers.length === 0) {
-      fetchProviders()
+  const contextText = useMemo(() => {
+    if (!context) return ''
+    try {
+      return JSON.stringify(context, null, 2)
+    } catch {
+      return String(context)
     }
-  }, [isOpen])
+  }, [context])
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  async function handleSend() {
+    const trimmed = input.trim()
+    if (!trimmed || isLoading) return
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return
-    const prompt = input.trim()
+    const nextMessages: ChatMessage[] = [...messages, { role: 'user', content: trimmed }]
+    setMessages(nextMessages)
     setInput('')
-    await sendMessage(prompt)
+    setIsLoading(true)
+
+    try {
+      const response = await llmApi.chat({
+        messages: [
+          ...(contextText
+            ? [
+                {
+                  role: 'system' as const,
+                  content: `Contexto actual:\n${contextText}`,
+                },
+              ]
+            : []),
+          ...nextMessages.map((m) => ({
+            role: m.role,
+            content: m.content,
+          })),
+        ],
+      })
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: response.content || 'Sin respuesta del modelo.',
+        },
+      ])
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Error enviando mensaje al modelo'
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `Error: ${message}`,
+        },
+      ])
+    } finally {
+      setIsLoading(false)
+    }
   }
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
+  function handleClose() {
+    closeDrawer()
+    setInput('')
+    setMessages([])
   }
 
   if (!isOpen) return null
 
   return (
-    <>
-      {/* Overlay */}
-      <div
-        className="drawer-overlay"
-        onClick={closeDrawer}
-      />
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/40 backdrop-blur-sm">
+      <div className="flex h-full w-full max-w-xl flex-col border-l border-white/10 bg-slate-950 text-slate-100 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-white/10 px-4 py-4">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-violet-600/20 p-2 text-violet-300">
+              <Bot className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="text-base font-semibold">{title || 'Asistente IA'}</h2>
+              <p className="text-xs text-slate-400">Contexto asistido del CRM</p>
+            </div>
+          </div>
 
-      {/* Panel */}
-      <div className="drawer-panel flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b bg-gray-900 text-white">
-          <div className="flex items-center gap-2">
-            <Bot size={20} className="text-brand-500" />
-            <h2 className="font-semibold">Asistente IA</h2>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={clearMessages}
-              className="p-1 hover:text-red-400 transition-colors"
-              title="Limpiar chat"
-            >
-              <Trash2 size={16} />
-            </button>
-            <button
-              onClick={closeDrawer}
-              className="p-1 hover:text-gray-300 transition-colors"
-            >
-              <X size={18} />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handleClose}
+            className="rounded-lg p-2 text-slate-400 transition hover:bg-white/5 hover:text-white"
+          >
+            <X className="h-5 w-5" />
+          </button>
         </div>
 
-        {/* Provider selector */}
-        {providers.length > 0 && (
-          <div className="px-4 py-2 border-b bg-gray-50">
-            <div className="relative">
-              <select
-                value={selectedProvider}
-                onChange={(e) => setProvider(e.target.value)}
-                className="w-full appearance-none bg-white border border-gray-300 rounded-md px-3 py-1.5 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
-              >
-                {providers.map((p) => (
-                  <option key={p.id} value={p.id} disabled={!p.is_available}>
-                    {p.name} ({p.model}){!p.is_available ? ' - no disponible' : ''}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="absolute right-2 top-2.5 text-gray-400 pointer-events-none" />
-            </div>
+        {contextText && (
+          <div className="border-b border-white/10 bg-black/20 p-4">
+            <div className="mb-2 text-xs uppercase tracking-wide text-slate-500">Contexto</div>
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-xl border border-white/10 bg-slate-900/70 p-3 text-xs text-slate-300">
+              {contextText}
+            </pre>
           </div>
         )}
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="flex-1 space-y-3 overflow-y-auto p-4">
           {messages.length === 0 && (
-            <div className="text-center text-gray-400 mt-8">
-              <Bot size={40} className="mx-auto mb-2 text-gray-300" />
-              <p className="text-sm">Pregunta algo sobre tus datos CRM</p>
+            <div className="rounded-2xl border border-dashed border-white/10 bg-white/5 p-4 text-sm text-slate-400">
+              Escribe una pregunta sobre el contexto actual del CRM.
             </div>
           )}
+
           {messages.map((msg, i) => (
             <div
-              key={i}
-              className={`flex gap-2 ${
-                msg.role === 'user' ? 'justify-end' : 'justify-start'
+              key={`${msg.role}-${i}`}
+              className={`max-w-[90%] rounded-2xl px-4 py-3 text-sm ${
+                msg.role === 'user'
+                  ? 'ml-auto bg-cyan-600 text-white'
+                  : 'bg-slate-900 border border-white/10 text-slate-200'
               }`}
             >
-              {msg.role === 'assistant' && (
-                <div className="w-7 h-7 rounded-full bg-brand-500 flex items-center justify-center flex-shrink-0 mt-1">
-                  <Bot size={14} className="text-white" />
-                </div>
-              )}
-              <div
-                className={`max-w-[80%] rounded-2xl px-4 py-2 text-sm ${
-                  msg.role === 'user'
-                    ? 'bg-brand-600 text-white rounded-tr-none'
-                    : 'bg-gray-100 text-gray-800 rounded-tl-none'
-                }`}
-              >
-                <p className="whitespace-pre-wrap">{msg.content}</p>
-                <span className="text-xs opacity-60 mt-1 block">
-                  {new Date(msg.timestamp).toLocaleTimeString('es-ES', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </span>
-              </div>
-              {msg.role === 'user' && (
-                <div className="w-7 h-7 rounded-full bg-gray-600 flex items-center justify-center flex-shrink-0 mt-1">
-                  <User size={14} className="text-white" />
-                </div>
-              )}
+              {msg.content}
             </div>
           ))}
+
           {isLoading && (
-            <div className="flex gap-2 justify-start">
-              <div className="w-7 h-7 rounded-full bg-brand-500 flex items-center justify-center flex-shrink-0">
-                <Bot size={14} className="text-white" />
-              </div>
-              <div className="bg-gray-100 rounded-2xl rounded-tl-none px-4 py-3">
-                <div className="flex gap-1">
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                </div>
-              </div>
+            <div className="inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-slate-900 px-4 py-3 text-sm text-slate-300">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Pensando…
             </div>
           )}
-          <div ref={messagesEndRef} />
         </div>
 
-        {/* Input */}
-        <div className="p-4 border-t bg-white">
-          <div className="flex gap-2">
+        <div className="border-t border-white/10 p-4">
+          <div className="flex items-end gap-3">
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Escribe tu pregunta..."
-              rows={2}
-              className="flex-1 resize-none border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500"
+              placeholder="Pregunta algo sobre dashboard, solicitudes, pipeline o contexto actual…"
+              className="min-h-[88px] flex-1 resize-none rounded-2xl border border-white/10 bg-slate-900 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500"
             />
             <button
-              onClick={handleSend}
+              type="button"
+              onClick={() => void handleSend()}
               disabled={isLoading || !input.trim()}
-              className="self-end p-2 bg-brand-600 text-white rounded-xl hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex h-11 items-center gap-2 rounded-xl bg-violet-600 px-4 text-sm font-medium text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <Send size={18} />
+              <Send className="h-4 w-4" />
+              Enviar
             </button>
           </div>
         </div>
       </div>
-    </>
+    </div>
   )
 }

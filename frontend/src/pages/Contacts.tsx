@@ -3,7 +3,7 @@ import CRMTable from '../components/CRMTable';
 import { ColumnDef } from '@tanstack/react-table';
 import { useAIStore } from '../store/aiStore';
 import { crmApi, Solicitud } from '../api/crm';
-import { Search, Filter, RefreshCw } from 'lucide-react';
+import { Search, RefreshCw } from 'lucide-react';
 
 const PRIORIDAD_COLORS: Record<string, string> = {
   alta: 'bg-red-100 text-red-700',
