@@ -14,6 +14,7 @@ from app.api.ai import router as ai_router
 from app.api.auth import router as auth_router
 from app.api.notifications import router as notifications_router
 from app.api.health import router as health_router
+from app.api.meta import router as meta_router
 
 
 @asynccontextmanager
@@ -45,6 +46,7 @@ app.add_middleware(
 
 # Routers
 app.include_router(health_router, tags=["Health"])
+app.include_router(meta_router, tags=["Meta"])
 app.include_router(auth_router, prefix="/auth", tags=["Auth"])
 app.include_router(crm_router, prefix="/crm", tags=["CRM"])
 app.include_router(ai_router, prefix="/ai", tags=["IA"])

@@ -86,7 +86,7 @@ jobs:
   lint:
     name: Lint backend + typecheck frontend
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -94,13 +94,31 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
 
-      - name: Install ruff
-        run: python -m pip install --upgrade pip ruff
+      - name: Install backend dependencies (needed for metadata lint)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements-dev.txt
 
       - name: Ruff check backend
         # No bloqueamos el CI por errores de estilo todavia: solo informativo.
         run: ruff check backend/ --exit-zero
+
+      - name: Lint metadata (Sprint E1)
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          SECRET_KEY: "ci-lint-secret"
+        run: python scripts/lint_metadata.py
+
+      - name: Verificar docs/DOMAIN.md regenerado
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          SECRET_KEY: "ci-lint-secret"
+        run: python scripts/gen_domain_docs.py --check
 
       - name: Set up Node 22
         uses: actions/setup-node@v4
