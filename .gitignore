@@ -43,6 +43,9 @@ logs/
 .pytest_cache/
 .coverage
 htmlcov/
+coverage.xml
+coverage/
+frontend/coverage/
 
 # Docker
 .docker/
