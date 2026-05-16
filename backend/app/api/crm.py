@@ -16,6 +16,7 @@ from app.core.models import (
     Actuacion,
     SolicitudActuacion,
 )
+from app.core.auth import hash_password, require_role
 import math
 import uuid as _uuid
 
@@ -717,8 +718,9 @@ async def update_usuario(
     usuario_id: str,
     body: UsuarioUpdate,
     db: AsyncSession = Depends(get_session),
+    _: Usuario = Depends(require_role("admin")),
 ):
-    """Actualiza metadatos (equipo, iniciales, color, cargo, activo). No toca password."""
+    """Actualiza metadatos (equipo, iniciales, color, cargo, activo). No toca password. Solo admin."""
     u = (await db.execute(select(Usuario).where(Usuario.id == usuario_id))).scalar_one_or_none()
     if not u:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -728,6 +730,89 @@ async def update_usuario(
     for k, v in data.items():
         setattr(u, k, v)
     u.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(u)
+    return u
+
+
+class UsuarioPasswordBody(BaseModel):
+    password: str
+    email: Optional[str] = None  # opcional: corregir email del placeholder
+
+
+@router.post("/usuarios/{usuario_id}/password", response_model=UsuarioOut)
+async def set_usuario_password(
+    usuario_id: str,
+    body: UsuarioPasswordBody,
+    db: AsyncSession = Depends(get_session),
+    _: Usuario = Depends(require_role("admin")),
+):
+    """Asigna password real a un usuario (tipico para activar placeholder).
+
+    Solo admin. Si se proporciona email, se actualiza el email tambien (util para
+    cambiar el placeholder@vedisa.local por el email real). Activa el usuario.
+    """
+    if len(body.password) < 6:
+        raise HTTPException(status_code=422, detail="password debe tener al menos 6 caracteres")
+    u = (await db.execute(select(Usuario).where(Usuario.id == usuario_id))).scalar_one_or_none()
+    if not u:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if body.email and body.email != u.email:
+        # Verificar que el nuevo email no este en uso
+        other = (await db.execute(
+            select(Usuario).where(Usuario.email == body.email, Usuario.id != usuario_id)
+        )).scalar_one_or_none()
+        if other:
+            raise HTTPException(status_code=409, detail="Email ya en uso por otro usuario")
+        u.email = body.email
+    u.hashed_password = hash_password(body.password)
+    u.activo = True
+    u.updated_at = datetime.utcnow()
+    await db.commit()
+    await db.refresh(u)
+    return u
+
+
+class UsuarioCreateBody(BaseModel):
+    email: str
+    nombre: str
+    password: str
+    rol: str = "comercial"
+    equipo: Optional[str] = None
+    iniciales: Optional[str] = None
+    color: Optional[str] = None
+    cargo: Optional[str] = None
+    activo: bool = True
+
+
+@router.post("/usuarios", response_model=UsuarioOut, status_code=201)
+async def create_usuario(
+    body: UsuarioCreateBody,
+    db: AsyncSession = Depends(get_session),
+    _: Usuario = Depends(require_role("admin")),
+):
+    """Crea un nuevo usuario. Solo admin."""
+    if len(body.password) < 6:
+        raise HTTPException(status_code=422, detail="password debe tener al menos 6 caracteres")
+    if body.equipo and body.equipo not in USUARIO_EQUIPOS:
+        raise HTTPException(status_code=422, detail=f"equipo invalido. Valores: {sorted(USUARIO_EQUIPOS)}")
+    existing = (await db.execute(select(Usuario).where(Usuario.email == body.email))).scalar_one_or_none()
+    if existing:
+        raise HTTPException(status_code=409, detail="Email ya registrado")
+    u = Usuario(
+        id=str(_uuid.uuid4()),
+        email=body.email,
+        nombre=body.nombre,
+        hashed_password=hash_password(body.password),
+        rol=body.rol,
+        activo=body.activo,
+        equipo=body.equipo,
+        iniciales=body.iniciales,
+        color=body.color,
+        cargo=body.cargo,
+        created_at=datetime.utcnow(),
+    )
+    db.add(u)
     await db.commit()
     await db.refresh(u)
     return u
