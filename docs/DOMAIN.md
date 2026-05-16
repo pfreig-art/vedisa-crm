@@ -266,6 +266,7 @@ erDiagram
 |---|---|---|
 | `POST` | `/ai/analyze/solicitud` | Analiza una solicitud CRM con el LLM seleccionado. |
 | `GET` | `/ai/audit` | Devuelve el log de auditoria de llamadas al LLM. |
+| `POST` | `/ai/brief` | Genera un brief contextual al abrir el drawer IA (Sprint E2).  Fuerza provider='openai' (gpt-4o) por decision de diseno: el brief queremos uniforme entre tenants aunque el primary del router sea otro. Cachea 60s por (user.id, mode, context). Si el provider falla o el JSON no parsea, devuelve un fallback graceful con status 200. |
 | `POST` | `/ai/chat` | Endpoint de chat directo con el router LLM. |
 | `GET` | `/ai/health` | Health check general o de un proveedor especifico. |
 | `GET` | `/ai/metrics` | Agrega metricas por proveedor: llamadas, tokens, latencia, tasa de exito. |
