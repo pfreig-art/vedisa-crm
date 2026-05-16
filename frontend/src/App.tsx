@@ -7,16 +7,20 @@ import PipelineBoard from './pages/PipelineBoard'
 import Login from './pages/Login'
 import Usuarios from './pages/Usuarios'
 import Perfil from './pages/Perfil'
+import Alertas from './pages/Alertas'
 import { useAIStore } from './store/aiStore'
 import { useAuthStore } from './store/authStore'
 import AIDrawer from './components/AIDrawer'
 import AlertasCampana from './components/AlertasCampana'
-import { LayoutDashboard, Users, Settings, Bot, Zap, LogOut, Loader2, UserCog } from 'lucide-react'
+import {
+  LayoutDashboard, Users, Settings, Bot, Zap, LogOut, Loader2, UserCog, AlertCircle,
+} from 'lucide-react'
 
 const baseNavItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true, adminOnly: false },
   { to: '/contacts', label: 'Contactos', icon: Users, adminOnly: false },
   { to: '/pipeline', label: 'Pipeline', icon: Zap, adminOnly: false },
+  { to: '/alertas', label: 'Alertas', icon: AlertCircle, adminOnly: true },
   { to: '/usuarios', label: 'Usuarios', icon: UserCog, adminOnly: true },
   { to: '/settings', label: 'Configuracion IA', icon: Settings, adminOnly: false },
 ]
@@ -185,6 +189,14 @@ export default function App() {
         element={
           <RequireAuth>
             <Perfil />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/alertas"
+        element={
+          <RequireAuth>
+            <Alertas />
           </RequireAuth>
         }
       />

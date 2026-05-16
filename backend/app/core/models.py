@@ -135,12 +135,19 @@ class Actuacion(SQLModel, table=True):
 
 
 class SolicitudActuacion(SQLModel, table=True):
-    """Relacion N-N entre solicitudes y actuaciones."""
+    """Relacion N-N entre solicitudes y actuaciones con m2 e importe por linea.
+
+    Conserva el PK compuesto (solicitud_id, actuacion_id) que ya provee la
+    uniqueness; m2 e importe son opcionales y representan los datos por linea
+    para construir la oferta PDF.
+    """
 
     __tablename__ = "solicitud_actuaciones"
 
     solicitud_id: str = Field(foreign_key="solicitudes.id", primary_key=True)
     actuacion_id: str = Field(foreign_key="actuaciones.id", primary_key=True)
+    m2: Optional[float] = Field(default=None)
+    importe: Optional[float] = Field(default=None)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

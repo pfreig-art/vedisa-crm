@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { X, Trash2, Save, Plus, Clock } from 'lucide-react'
+import { X, Trash2, Save, Plus, Clock, FileDown } from 'lucide-react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   PieChart,
@@ -329,7 +329,9 @@ export default function SolicitudSheet({ solicitud, open, onClose, mode }: Props
   const { data: usuarios = [] } = useUsuarios({ activo: true })
   const { data: actuaciones = [] } = useActuaciones()
 
+  type ActuacionLineState = { m2: string; importe: string }
   const [selectedActuaciones, setSelectedActuaciones] = useState<string[]>([])
+  const [actuacionLineas, setActuacionLineas] = useState<Record<string, ActuacionLineState>>({})
   const [contactos, setContactos] = useState<ContactoInput[]>([])
 
   // Carga de actuaciones y contactos al abrir en modo edit
@@ -376,12 +378,23 @@ export default function SolicitudSheet({ solicitud, open, onClose, mode }: Props
     } else {
       reset(emptyValues())
       setSelectedActuaciones([])
+      setActuacionLineas({})
       setContactos([])
     }
   }, [solicitud, mode, reset, open])
 
   useEffect(() => {
-    if (solActuaciones) setSelectedActuaciones(solActuaciones.map((a) => a.id))
+    if (solActuaciones) {
+      setSelectedActuaciones(solActuaciones.map((a) => a.actuacion_id))
+      const lineas: Record<string, ActuacionLineState> = {}
+      for (const a of solActuaciones) {
+        lineas[a.actuacion_id] = {
+          m2: a.m2 != null ? String(a.m2) : '',
+          importe: a.importe != null ? String(a.importe) : '',
+        }
+      }
+      setActuacionLineas(lineas)
+    }
   }, [solActuaciones])
 
   useEffect(() => {
@@ -415,7 +428,20 @@ export default function SolicitudSheet({ solicitud, open, onClose, mode }: Props
   }
 
   async function persistChildren(solicitudId: string) {
-    await crmApi.setSolicitudActuaciones(solicitudId, selectedActuaciones)
+    const payload = selectedActuaciones.map((id) => {
+      const l = actuacionLineas[id]
+      const parse = (v: string | undefined) => {
+        if (!v) return null
+        const n = Number(v.replace(',', '.'))
+        return Number.isFinite(n) ? n : null
+      }
+      return {
+        actuacion_id: id,
+        m2: parse(l?.m2),
+        importe: parse(l?.importe),
+      }
+    })
+    await crmApi.setSolicitudActuaciones(solicitudId, payload)
     const existentes = await crmApi.listContactos(solicitudId)
     await Promise.all(existentes.map((c) => crmApi.deleteContacto(c.id)))
     for (const c of contactos) {
@@ -475,9 +501,24 @@ export default function SolicitudSheet({ solicitud, open, onClose, mode }: Props
   const isPending = createMut.isPending || updateMut.isPending
 
   const toggleActuacion = (id: string) => {
-    setSelectedActuaciones((curr) =>
-      curr.includes(id) ? curr.filter((x) => x !== id) : [...curr, id],
-    )
+    setSelectedActuaciones((curr) => {
+      const next = curr.includes(id) ? curr.filter((x) => x !== id) : [...curr, id]
+      setActuacionLineas((prev) => {
+        if (next.includes(id)) {
+          return prev[id] ? prev : { ...prev, [id]: { m2: '', importe: '' } }
+        }
+        const { [id]: _drop, ...rest } = prev
+        return rest
+      })
+      return next
+    })
+  }
+
+  const updateActuacionLinea = (id: string, field: 'm2' | 'importe', value: string) => {
+    setActuacionLineas((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] ?? { m2: '', importe: '' }), [field]: value },
+    }))
   }
 
   const addContacto = (tipo: ContactoTipo) => {
@@ -513,6 +554,33 @@ export default function SolicitudSheet({ solicitud, open, onClose, mode }: Props
               {solicitud && <p className="text-xs text-gray-500 mt-0.5">{solicitud.codigo}</p>}
             </div>
             <div className="flex items-center gap-2">
+              {mode === 'edit' && solicitud && (
+                solicitud.estado === 'Enviada' || solicitud.estado === 'Adjudicada'
+              ) && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const blob = await crmApi.descargarOfertaPdf(solicitud.id)
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a')
+                      a.href = url
+                      a.download = `oferta_${solicitud.codigo}.pdf`
+                      document.body.appendChild(a)
+                      a.click()
+                      a.remove()
+                      URL.revokeObjectURL(url)
+                    } catch (e) {
+                      alert('No se pudo descargar el PDF de oferta')
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 transition"
+                  title="Descargar oferta PDF"
+                >
+                  <FileDown className="w-4 h-4" />
+                  Exportar PDF
+                </button>
+              )}
               {mode === 'edit' && (
                 <button
                   type="button"
@@ -777,29 +845,91 @@ export default function SolicitudSheet({ solicitud, open, onClose, mode }: Props
               {actuaciones.length === 0 && (
                 <p className="text-xs text-gray-400">Cargando catalogo…</p>
               )}
-              <div className="grid grid-cols-3 gap-2">
+              <div className="space-y-1.5">
                 {actuaciones.map((a) => {
                   const checked = selectedActuaciones.includes(a.id)
+                  const linea = actuacionLineas[a.id] ?? { m2: '', importe: '' }
                   return (
-                    <label
+                    <div
                       key={a.id}
-                      className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs cursor-pointer transition ${
+                      className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs transition ${
                         checked
-                          ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                          : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                          ? 'border-indigo-500 bg-indigo-50'
+                          : 'border-gray-200 hover:bg-gray-50'
                       }`}
                     >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleActuacion(a.id)}
-                        className="accent-indigo-600"
-                      />
-                      {a.nombre}
-                    </label>
+                      <label className="flex items-center gap-2 flex-1 cursor-pointer text-gray-800">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleActuacion(a.id)}
+                          className="accent-indigo-600"
+                        />
+                        <span className={checked ? 'text-indigo-700 font-medium' : ''}>
+                          {a.nombre}
+                        </span>
+                      </label>
+                      {checked && (
+                        <>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            step="0.01"
+                            placeholder="m2"
+                            value={linea.m2}
+                            onChange={(e) =>
+                              updateActuacionLinea(a.id, 'm2', e.target.value)
+                            }
+                            className="w-20 rounded border border-gray-300 px-1.5 py-0.5 text-xs text-right focus:outline-none focus:border-indigo-500"
+                          />
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            step="0.01"
+                            placeholder="importe"
+                            value={linea.importe}
+                            onChange={(e) =>
+                              updateActuacionLinea(a.id, 'importe', e.target.value)
+                            }
+                            className="w-24 rounded border border-gray-300 px-1.5 py-0.5 text-xs text-right focus:outline-none focus:border-indigo-500"
+                          />
+                        </>
+                      )}
+                    </div>
                   )
                 })}
               </div>
+              {selectedActuaciones.length > 0 && (
+                <div className="mt-2 flex justify-end gap-6 border-t border-gray-200 pt-2 text-xs text-gray-600">
+                  <div>
+                    Total m2:{' '}
+                    <span className="font-semibold text-gray-900">
+                      {selectedActuaciones
+                        .reduce((acc, id) => {
+                          const v = Number(
+                            (actuacionLineas[id]?.m2 ?? '').replace(',', '.'),
+                          )
+                          return acc + (Number.isFinite(v) ? v : 0)
+                        }, 0)
+                        .toLocaleString('es-ES', { maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <div>
+                    Total importe:{' '}
+                    <span className="font-semibold text-gray-900">
+                      {selectedActuaciones
+                        .reduce((acc, id) => {
+                          const v = Number(
+                            (actuacionLineas[id]?.importe ?? '').replace(',', '.'),
+                          )
+                          return acc + (Number.isFinite(v) ? v : 0)
+                        }, 0)
+                        .toLocaleString('es-ES', { maximumFractionDigits: 2 })}{' '}
+                      EUR
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Contactos */}
