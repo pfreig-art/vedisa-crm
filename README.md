@@ -193,6 +193,29 @@ npm install
 npm run dev
 ```
 
+## Metadata del dominio
+
+El CRM expone su modelo y reglas como datos consumibles por agentes / IAs:
+
+- `GET /meta/schema` — entidades, relaciones, enums, reglas de negocio y endpoints, generado por reflexion desde las anotaciones de los SQLModel. Publico (no requiere auth).
+- `GET /meta/glossary` — diccionario de terminos de negocio (oferta, cobertura, margen, actuacion, alerta...) con las ubicaciones donde aparecen.
+- [docs/DOMAIN.md](docs/DOMAIN.md) — version legible en Markdown del esquema, regenerada automaticamente.
+
+Comandos locales:
+
+```bash
+# Regenerar la doc Markdown
+python scripts/gen_domain_docs.py
+
+# Verificar que la doc esta sincronizada con el codigo
+python scripts/gen_domain_docs.py --check
+
+# Lint de metadata (description + business_meaning + summary en endpoints)
+python scripts/lint_metadata.py
+```
+
+Para anadir un campo nuevo a un modelo, anade `description=` en `Field()` y una entrada en `__field_meta__` con `business_meaning` (mas opcionalmente `examples`, `unit`, `calculated`, `legacy`). El lint y el `--check` del CI se aseguran de que no falte nada.
+
 ## Despliegue
 
 Para desplegar en Windows Server con IIS + ARR y backend como Windows Service nativo, ver:
