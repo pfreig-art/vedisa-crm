@@ -147,7 +147,7 @@ function EstadoProgressBar({ estado }: { estado: string }) {
 // ---------------------------------------------------------------------------
 // Mini donut financiero
 // ---------------------------------------------------------------------------
-function FinancieroDonut({ oferta, coste }: { oferta?: number | null; coste?: number | null }) {
+export function FinancieroDonut({ oferta, coste }: { oferta?: number | null; coste?: number | null }) {
   if (!oferta || !coste || oferta <= 0 || coste <= 0) return null
   const margen = oferta - coste
   const data = [
