@@ -12,7 +12,7 @@ CRM Vedisa — Pipeline comercial con drawer IA contextual y proveedores LLM int
 | Kanban Pipeline | @hello-pangea/dnd |
 | Estado cliente | Zustand + TanStack Query |
 | Backend | FastAPI + Python 3.11 |
-| Base de datos | PostgreSQL 16 |
+| Base de datos | PostgreSQL 18 |
 | ORM | SQLModel + Alembic |
 | IA / LLM | Abstracción multi-proveedor (OpenAI, Anthropic, Gemini, DeepSeek, OpenRouter) |
 | Auth | JWT + roles |
@@ -215,7 +215,7 @@ npm run dev
 > **Shell**: PowerShell  
 > **Python**: 3.11 (venv local en `backend\.venv`)  
 > **Node**: 18+  
-> **BD**: PostgreSQL 16 corriendo en local (puerto 5432)  
+> **BD**: PostgreSQL 18 corriendo en local (puerto 5432)  
 > **Repo local**: clonar en la ruta deseada, p.ej. `C:\dev\vedisa-crm`
 
 ### Pull y arranque (PowerShell)

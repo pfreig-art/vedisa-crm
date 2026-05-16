@@ -12,7 +12,9 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        # NOTA: producción corre PostgreSQL 18; en CI usamos 17-alpine
+        # mientras 18-alpine no esté ampliamente disponible.
+        image: postgres:17-alpine
         env:
           POSTGRES_DB: vedisa_test
           POSTGRES_USER: vedisa

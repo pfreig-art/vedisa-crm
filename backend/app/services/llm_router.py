@@ -13,7 +13,7 @@ import structlog
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from app.core.config import settings
-from app.providers.base import LLMProvider, LLMRequest, LLMResponse
+from app.providers.base import LLMProvider, LLMRequest, LLMResponse, LLMMessage
 
 log = structlog.get_logger()
 
@@ -119,7 +119,7 @@ class LLMRouterService:
         if not provider:
             return {"provider": name, "status": "not_configured", "error": "Provider no cargado"}
         try:
-            req = LLMRequest(messages=[{"role": "user", "content": "di: ok"}])
+            req = LLMRequest(messages=[LLMMessage(role="user", content="di: ok")])
             resp = await asyncio.wait_for(provider.generate(req), timeout=15)
             return {"provider": name, "status": "ok", "model": resp.model, "latency_ms": resp.latency_ms}
         except Exception as e:

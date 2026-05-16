@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import CRMTable from '../components/CRMTable';
+import SolicitudSheet from '../components/SolicitudSheet';
 import { ColumnDef } from '@tanstack/react-table';
 import { useAIStore } from '../store/aiStore';
 import { crmApi, Solicitud } from '../api/crm';
-import { Search, RefreshCw } from 'lucide-react';
+import { Search, RefreshCw, Download, Plus, Bot } from 'lucide-react';
 
 const PRIORIDAD_COLORS: Record<string, string> = {
   alta: 'bg-red-100 text-red-700',
@@ -47,7 +48,7 @@ const columns: ColumnDef<Solicitud>[] = [
       const estado = getValue<string>();
       return (
         <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ESTADO_COLORS[estado] || 'bg-gray-100 text-gray-600'}`}>
-          {estado.replace('_', ' ')}
+          {estado?.replace('_', ' ')}
         </span>
       );
     },
@@ -92,9 +93,15 @@ const columns: ColumnDef<Solicitud>[] = [
 export default function Contacts() {
   const [data, setData] = useState<Solicitud[]>([]);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [search, setSearch] = useState('');
   const [total, setTotal] = useState(0);
   const { setContext, openDrawer } = useAIStore();
+
+  // Estado del sheet de detalle / creación
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [sheetMode, setSheetMode] = useState<'create' | 'edit'>('edit');
+  const [selected, setSelected] = useState<Solicitud | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -113,7 +120,15 @@ export default function Contacts() {
     fetchData();
   }, [fetchData]);
 
-  const handleRowClick = async (row: Solicitud) => {
+  // Click fila -> abrir detalle/edición
+  const handleRowClick = (row: Solicitud) => {
+    setSelected(row);
+    setSheetMode('edit');
+    setSheetOpen(true);
+  };
+
+  // Botón "Analizar con IA" en una fila concreta (mantiene el comportamiento previo)
+  const handleAnalyzeRow = async (row: Solicitud) => {
     try {
       const ctx = await crmApi.getAIContext(row.id);
       setContext(ctx as Record<string, unknown>);
@@ -123,6 +138,60 @@ export default function Contacts() {
     }
   };
 
+  const handleCreate = () => {
+    setSelected(null);
+    setSheetMode('create');
+    setSheetOpen(true);
+  };
+
+  const handleSheetClose = () => {
+    setSheetOpen(false);
+    // refrescar listado por si se creó/editó/borró
+    fetchData();
+  };
+
+  const handleExportXlsx = async () => {
+    setExporting(true);
+    try {
+      const blob = await crmApi.exportSolicitudes('xlsx');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const ts = new Date().toISOString().slice(0, 10);
+      a.download = `solicitudes-${ts}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to export solicitudes', err);
+      alert('No se pudo exportar. Revisa la consola.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // Columnas extendidas con acción IA por fila (sin reventar el click principal)
+  const columnsWithActions: ColumnDef<Solicitud>[] = [
+    ...columns,
+    {
+      id: 'acciones',
+      header: '',
+      cell: ({ row }) => (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            handleAnalyzeRow(row.original);
+          }}
+          title="Analizar con IA"
+          className="p-1.5 rounded-md text-brand-500 hover:bg-brand-500/10"
+        >
+          <Bot className="w-4 h-4" />
+        </button>
+      ),
+    },
+  ];
+
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
@@ -130,14 +199,32 @@ export default function Contacts() {
           <h1 className="text-2xl font-bold text-white">Solicitudes CRM</h1>
           <p className="text-gray-400 text-sm mt-1">{total} solicitudes en total</p>
         </div>
-        <button
-          onClick={fetchData}
-          disabled={loading}
-          className="flex items-center gap-2 px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md text-sm"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-          Actualizar
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleExportXlsx}
+            disabled={exporting || loading}
+            title="Exportar a Excel"
+            className="flex items-center gap-2 px-3 py-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded-md text-sm disabled:opacity-50"
+          >
+            <Download className={`w-4 h-4 ${exporting ? 'animate-pulse' : ''}`} />
+            {exporting ? 'Exportando…' : 'Excel'}
+          </button>
+          <button
+            onClick={handleCreate}
+            className="flex items-center gap-2 px-3 py-2 bg-brand-600 hover:bg-brand-700 text-white rounded-md text-sm"
+          >
+            <Plus className="w-4 h-4" />
+            Nueva
+          </button>
+          <button
+            onClick={fetchData}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-md text-sm"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Actualizar
+          </button>
+        </div>
       </div>
 
       <div className="flex gap-3 mb-4">
@@ -161,10 +248,17 @@ export default function Contacts() {
       ) : (
         <CRMTable
           data={data}
-          columns={columns}
+          columns={columnsWithActions}
           onRowClick={handleRowClick}
         />
       )}
+
+      <SolicitudSheet
+        solicitud={selected}
+        open={sheetOpen}
+        onClose={handleSheetClose}
+        mode={sheetMode}
+      />
     </div>
   );
 }

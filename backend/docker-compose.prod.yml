@@ -2,7 +2,9 @@ version: '3.9'
 
 services:
   db:
-    image: postgres:16-alpine
+    # NOTA: producción real corre PostgreSQL 18; este compose usa 17-alpine
+    # mientras la imagen 18-alpine no esté ampliamente disponible.
+    image: postgres:17-alpine
     restart: always
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-vedisa}
