@@ -45,6 +45,14 @@ export const authApi = {
     const { data } = await api.get('/auth/me')
     return data as CurrentUser
   },
+
+  changePassword: async (passwordActual: string, passwordNueva: string): Promise<{ ok: boolean }> => {
+    const { data } = await api.post('/auth/change-password', {
+      password_actual: passwordActual,
+      password_nueva: passwordNueva,
+    })
+    return data as { ok: boolean }
+  },
 }
 
 export default authApi
