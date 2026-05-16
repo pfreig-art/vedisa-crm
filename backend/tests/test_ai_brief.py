@@ -44,8 +44,8 @@ def mock_llm_ok(monkeypatch):
     async def fake_generate(request, provider_name=None):
         return LLMResponse(
             content=json.dumps(payload, ensure_ascii=False),
-            provider=provider_name or "openai",
-            model="gpt-4o",
+            provider=provider_name or "openrouter",
+            model="sonar",
             tokens_used=420,
             latency_ms=312,
             raw={},
@@ -63,8 +63,8 @@ def mock_llm_invalid(monkeypatch):
     async def fake_generate(request, provider_name=None):
         return LLMResponse(
             content="Lo siento, no puedo responder en formato JSON aqui.",
-            provider=provider_name or "openai",
-            model="gpt-4o",
+            provider=provider_name or "openrouter",
+            model="sonar",
             tokens_used=50,
             latency_ms=120,
             raw={},
@@ -123,8 +123,8 @@ async def test_brief_dashboard_con_mock_devuelve_200_y_estructura(
     assert "Pipeline saludable" in body["summary"]
     assert len(body["bullets"]) == 3
     assert len(body["chart_specs"]) == 2
-    assert body["provider"] == "openai"
-    assert body["model"] == "gpt-4o"
+    assert body["provider"] == "openrouter"
+    assert body["model"] == "sonar"
     # Header de cache: primera llamada no cacheada.
     assert r.headers.get("X-Brief-Cached") == "false"
 
