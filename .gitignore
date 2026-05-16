@@ -50,3 +50,9 @@ htmlcov/
 # OS
 .DS_Store
 *.pid
+
+# Local SQLite dev DB
+backend/*.db
+backend/*.db-journal
+*.sqlite
+*.sqlite3

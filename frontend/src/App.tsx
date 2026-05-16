@@ -5,21 +5,24 @@ import Contacts from './pages/Contacts'
 import SettingsPage from './pages/Settings'
 import PipelineBoard from './pages/PipelineBoard'
 import Login from './pages/Login'
+import Usuarios from './pages/Usuarios'
 import { useAIStore } from './store/aiStore'
 import { useAuthStore } from './store/authStore'
 import AIDrawer from './components/AIDrawer'
-import { LayoutDashboard, Users, Settings, Bot, Zap, LogOut, Loader2 } from 'lucide-react'
+import { LayoutDashboard, Users, Settings, Bot, Zap, LogOut, Loader2, UserCog } from 'lucide-react'
 
-const navItems = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
-  { to: '/contacts', label: 'Contactos', icon: Users },
-  { to: '/pipeline', label: 'Pipeline', icon: Zap },
-  { to: '/settings', label: 'Configuracion IA', icon: Settings },
+const baseNavItems = [
+  { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true, adminOnly: false },
+  { to: '/contacts', label: 'Contactos', icon: Users, adminOnly: false },
+  { to: '/pipeline', label: 'Pipeline', icon: Zap, adminOnly: false },
+  { to: '/usuarios', label: 'Usuarios', icon: UserCog, adminOnly: true },
+  { to: '/settings', label: 'Configuracion IA', icon: Settings, adminOnly: false },
 ]
 
 function ProtectedShell({ children }: { children: React.ReactNode }) {
   const { isOpen } = useAIStore()
   const { user, logout } = useAuthStore()
+  const navItems = baseNavItems.filter((item) => !item.adminOnly || user?.rol === 'admin')
 
   return (
     <div className="min-h-screen flex">
@@ -154,6 +157,14 @@ export default function App() {
         element={
           <RequireAuth>
             <SettingsPage />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/usuarios"
+        element={
+          <RequireAuth>
+            <Usuarios />
           </RequireAuth>
         }
       />

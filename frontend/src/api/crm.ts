@@ -27,6 +27,10 @@ api.interceptors.response.use(
   },
 )
 
+// ============================================================
+// Tipos
+// ============================================================
+
 export interface Solicitud {
   id: string
   codigo: string
@@ -36,17 +40,31 @@ export interface Solicitud {
   kanban_column: string
   color_estado: string
   prioridad?: string | null
-  comercial?: string | null
-  tecnico_estudios?: string | null
+  comercial?: string | null            // UUID -> usuarios.id
+  tecnico_estudios?: string | null     // UUID -> usuarios.id
   fecha_solicitud?: string | null
   fecha_limite?: string | null
   aging_dias?: number | null
   oferta?: number | null
+  // Legacy
   estudio_direccion?: string | null
   presupuesto?: string | null
   contactos?: string | null
   actuaciones?: string | null
   observaciones?: string | null
+  // Sprint A
+  tipo_via?: string | null
+  numero?: string | null
+  cp?: string | null
+  fecha_reunion?: string | null
+  fecha_visita?: string | null
+  fecha_enviado?: string | null
+  fecha_cierre_cliente?: string | null
+  descripcion?: string | null
+  cobertura_pct?: number | null
+  coste?: number | null
+  coeficiente?: number | null
+  margen_pct?: number | null
 }
 
 export interface SolicitudCreate {
@@ -67,6 +85,86 @@ export interface SolicitudCreate {
   observaciones?: string | null
   contactos?: string | null
   actuaciones?: string | null
+  // Sprint A
+  tipo_via?: string | null
+  numero?: string | null
+  cp?: string | null
+  fecha_reunion?: string | null
+  fecha_visita?: string | null
+  fecha_enviado?: string | null
+  fecha_cierre_cliente?: string | null
+  descripcion?: string | null
+  cobertura_pct?: number | null
+  coste?: number | null
+  coeficiente?: number | null
+  margen_pct?: number | null
+}
+
+export interface Usuario {
+  id: string
+  email: string
+  nombre: string
+  rol: string
+  activo: boolean
+  equipo?: string | null
+  iniciales?: string | null
+  color?: string | null
+  cargo?: string | null
+}
+
+export interface UsuarioUpdate {
+  nombre?: string
+  rol?: string
+  activo?: boolean
+  equipo?: string | null
+  iniciales?: string | null
+  color?: string | null
+  cargo?: string | null
+}
+
+export interface UsuarioCreate {
+  email: string
+  nombre: string
+  password: string
+  rol?: string
+  equipo?: string | null
+  iniciales?: string | null
+  color?: string | null
+  cargo?: string | null
+  activo?: boolean
+}
+
+export type ContactoTipo =
+  | 'administracion'
+  | 'tecnico_obra'
+  | 'ensena_obra'
+  | 'presidente'
+  | 'propiedad'
+  | 'otro'
+
+export interface Contacto {
+  id: string
+  solicitud_id: string
+  tipo: ContactoTipo
+  nombre?: string | null
+  telefono?: string | null
+  email?: string | null
+  notas?: string | null
+}
+
+export interface ContactoInput {
+  tipo: ContactoTipo
+  nombre?: string | null
+  telefono?: string | null
+  email?: string | null
+  notas?: string | null
+}
+
+export interface Actuacion {
+  id: string
+  nombre: string
+  orden: number
+  activo: boolean
 }
 
 export interface DashboardMonth {
@@ -120,7 +218,12 @@ export interface EstadoUpdatePayload {
   color_estado?: string | null
 }
 
+// ============================================================
+// API
+// ============================================================
+
 export const crmApi = {
+  // -- Solicitudes --
   listSolicitudes: async (params?: Record<string, unknown>): Promise<PaginatedSolicitudes> => {
     const { data } = await api.get('/crm/solicitudes', { params })
     return {
@@ -181,6 +284,67 @@ export const crmApi = {
       responseType: 'blob',
     })
     return data as Blob
+  },
+
+  // -- Usuarios --
+  listUsuarios: async (params?: { activo?: boolean; equipo?: string }): Promise<Usuario[]> => {
+    const { data } = await api.get('/crm/usuarios', { params })
+    return data as Usuario[]
+  },
+
+  getUsuario: async (id: string): Promise<Usuario> => {
+    const { data } = await api.get(`/crm/usuarios/${id}`)
+    return data as Usuario
+  },
+
+  updateUsuario: async (id: string, payload: UsuarioUpdate): Promise<Usuario> => {
+    const { data } = await api.patch(`/crm/usuarios/${id}`, payload)
+    return data as Usuario
+  },
+
+  createUsuario: async (payload: UsuarioCreate): Promise<Usuario> => {
+    const { data } = await api.post('/crm/usuarios', payload)
+    return data as Usuario
+  },
+
+  setUsuarioPassword: async (id: string, password: string, email?: string): Promise<Usuario> => {
+    const { data } = await api.post(`/crm/usuarios/${id}/password`, { password, email })
+    return data as Usuario
+  },
+
+  // -- Contactos --
+  listContactos: async (solicitudId: string): Promise<Contacto[]> => {
+    const { data } = await api.get(`/crm/solicitudes/${solicitudId}/contactos`)
+    return data as Contacto[]
+  },
+
+  createContacto: async (solicitudId: string, payload: ContactoInput): Promise<Contacto> => {
+    const { data } = await api.post(`/crm/solicitudes/${solicitudId}/contactos`, payload)
+    return data as Contacto
+  },
+
+  updateContacto: async (id: string, payload: Partial<ContactoInput>): Promise<Contacto> => {
+    const { data } = await api.put(`/crm/contactos/${id}`, payload)
+    return data as Contacto
+  },
+
+  deleteContacto: async (id: string): Promise<void> => {
+    await api.delete(`/crm/contactos/${id}`)
+  },
+
+  // -- Actuaciones --
+  listActuaciones: async (): Promise<Actuacion[]> => {
+    const { data } = await api.get('/crm/actuaciones')
+    return data as Actuacion[]
+  },
+
+  listSolicitudActuaciones: async (solicitudId: string): Promise<Actuacion[]> => {
+    const { data } = await api.get(`/crm/solicitudes/${solicitudId}/actuaciones`)
+    return data as Actuacion[]
+  },
+
+  setSolicitudActuaciones: async (solicitudId: string, actuacionIds: string[]): Promise<void> => {
+    await api.put(`/crm/solicitudes/${solicitudId}/actuaciones`, { actuacion_ids: actuacionIds })
   },
 }
 

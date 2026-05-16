@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import CRMTable from '../components/CRMTable';
 import SolicitudSheet from '../components/SolicitudSheet';
+import UserAvatar from '../components/UserAvatar';
 import { ColumnDef } from '@tanstack/react-table';
 import { useAIStore } from '../store/aiStore';
-import { crmApi, Solicitud } from '../api/crm';
+import { crmApi, Solicitud, Usuario } from '../api/crm';
+import { useUsuariosMap } from '../hooks/useCatalogs';
 import { Search, RefreshCw, Download, Plus, Bot } from 'lucide-react';
 
 const PRIORIDAD_COLORS: Record<string, string> = {
@@ -21,74 +23,36 @@ const ESTADO_COLORS: Record<string, string> = {
   descartada: 'bg-gray-100 text-gray-500',
 };
 
-const columns: ColumnDef<Solicitud>[] = [
-  {
-    accessorKey: 'codigo',
-    header: 'Codigo',
-    cell: ({ getValue }) => (
-      <span className="font-mono text-xs text-gray-400">{getValue<string>()}</span>
-    ),
-  },
-  {
-    accessorKey: 'nombre_corto',
-    header: 'Solicitud',
-    cell: ({ getValue }) => (
-      <span className="font-medium text-gray-900">{getValue<string>()}</span>
-    ),
-  },
-  {
-    accessorKey: 'poblacion',
-    header: 'Poblacion',
-    cell: ({ getValue }) => getValue<string>() || '-',
-  },
-  {
-    accessorKey: 'estado',
-    header: 'Estado',
-    cell: ({ getValue }) => {
-      const estado = getValue<string>();
-      return (
-        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${ESTADO_COLORS[estado] || 'bg-gray-100 text-gray-600'}`}>
-          {estado?.replace('_', ' ')}
-        </span>
-      );
-    },
-  },
-  {
-    accessorKey: 'prioridad',
-    header: 'Prioridad',
-    cell: ({ getValue }) => {
-      const p = getValue<string>();
-      return (
-        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${PRIORIDAD_COLORS[p] || 'bg-gray-100 text-gray-600'}`}>
-          {p}
-        </span>
-      );
-    },
-  },
-  {
-    accessorKey: 'comercial',
-    header: 'Comercial',
-    cell: ({ getValue }) => getValue<string>() || '-',
-  },
-  {
-    accessorKey: 'aging_dias',
-    header: 'Aging',
-    cell: ({ getValue }) => {
-      const dias = getValue<number>();
-      if (!dias) return '-';
-      const color = dias > 30 ? 'text-red-500' : dias > 14 ? 'text-yellow-500' : 'text-green-500';
-      return <span className={`font-medium ${color}`}>{dias}d</span>;
-    },
-  },
-  {
-    accessorKey: 'oferta',
-    header: 'Oferta',
-    cell: ({ getValue }) => {
-      const v = getValue<number>();
-      return v ? `${v.toLocaleString('es-ES')} EUR` : '-';
-    },
-  },
-];
+/** Compone una dirección legible a partir de los campos individuales. */
+function composeDireccion(s: Solicitud): string {
+  const linea1Parts = [s.tipo_via, s.estudio_direccion, s.numero].filter(
+    (v) => v && String(v).trim() !== '',
+  );
+  const linea2Parts = [s.cp, s.poblacion].filter(
+    (v) => v && String(v).trim() !== '',
+  );
+  const l1 = linea1Parts.join(' ').trim();
+  const l2 = linea2Parts.join(' ').trim();
+  if (l1 && l2) return `${l1}, ${l2}`;
+  return l1 || l2 || '-';
+}
+
+/** Resuelve un UUID o nombre legacy a un Usuario del mapa, o devuelve null. */
+function resolveUsuario(
+  raw: string | null | undefined,
+  map: Map<string, Usuario>,
+): { usuario: Usuario | null; fallback: string | null } {
+  if (!raw) return { usuario: null, fallback: null };
+  const trimmed = raw.trim();
+  if (!trimmed) return { usuario: null, fallback: null };
+  // UUID v4: usar mapa
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) {
+    const u = map.get(trimmed);
+    return { usuario: u ?? null, fallback: u ? null : '·' };
+  }
+  // Valor legacy en texto plano
+  return { usuario: null, fallback: trimmed };
+}
 
 export default function Contacts() {
   const [data, setData] = useState<Solicitud[]>([]);
@@ -97,6 +61,7 @@ export default function Contacts() {
   const [search, setSearch] = useState('');
   const [total, setTotal] = useState(0);
   const { setContext, openDrawer } = useAIStore();
+  const { map: usuariosMap } = useUsuariosMap();
 
   // Estado del sheet de detalle / creación
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -106,7 +71,7 @@ export default function Contacts() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await crmApi.listSolicitudes({ search, size: 50 });
+      const result = await crmApi.listSolicitudes({ search, page_size: 50 });
       setData(result.items);
       setTotal(result.total);
     } catch (err) {
@@ -127,7 +92,7 @@ export default function Contacts() {
     setSheetOpen(true);
   };
 
-  // Botón "Analizar con IA" en una fila concreta (mantiene el comportamiento previo)
+  // Botón "Analizar con IA" en una fila concreta
   const handleAnalyzeRow = async (row: Solicitud) => {
     try {
       const ctx = await crmApi.getAIContext(row.id);
@@ -146,7 +111,6 @@ export default function Contacts() {
 
   const handleSheetClose = () => {
     setSheetOpen(false);
-    // refrescar listado por si se creó/editó/borró
     fetchData();
   };
 
@@ -171,26 +135,122 @@ export default function Contacts() {
     }
   };
 
-  // Columnas extendidas con acción IA por fila (sin reventar el click principal)
-  const columnsWithActions: ColumnDef<Solicitud>[] = [
-    ...columns,
-    {
-      id: 'acciones',
-      header: '',
-      cell: ({ row }) => (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleAnalyzeRow(row.original);
-          }}
-          title="Analizar con IA"
-          className="p-1.5 rounded-md text-brand-500 hover:bg-brand-500/10"
-        >
-          <Bot className="w-4 h-4" />
-        </button>
-      ),
-    },
-  ];
+  // Columnas — dependen de usuariosMap, así que se construyen con useMemo
+  const columns = useMemo<ColumnDef<Solicitud>[]>(
+    () => [
+      {
+        accessorKey: 'codigo',
+        header: 'Codigo',
+        cell: ({ getValue }) => (
+          <span className="font-mono text-xs text-gray-400">{getValue<string>()}</span>
+        ),
+      },
+      {
+        accessorKey: 'nombre_corto',
+        header: 'Solicitud',
+        cell: ({ getValue }) => (
+          <span className="font-medium text-gray-900">{getValue<string>()}</span>
+        ),
+      },
+      {
+        id: 'direccion',
+        header: 'Direccion',
+        cell: ({ row }) => (
+          <span className="text-sm text-gray-700" title={composeDireccion(row.original)}>
+            {composeDireccion(row.original)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'estado',
+        header: 'Estado',
+        cell: ({ getValue }) => {
+          const estado = getValue<string>();
+          return (
+            <span
+              className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                ESTADO_COLORS[estado] || 'bg-gray-100 text-gray-600'
+              }`}
+            >
+              {estado?.replace('_', ' ')}
+            </span>
+          );
+        },
+      },
+      {
+        accessorKey: 'prioridad',
+        header: 'Prioridad',
+        cell: ({ getValue }) => {
+          const p = getValue<string>();
+          return (
+            <span
+              className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                PRIORIDAD_COLORS[p] || 'bg-gray-100 text-gray-600'
+              }`}
+            >
+              {p}
+            </span>
+          );
+        },
+      },
+      {
+        accessorKey: 'comercial',
+        header: 'Comercial',
+        cell: ({ getValue }) => {
+          const { usuario, fallback } = resolveUsuario(getValue<string>(), usuariosMap);
+          if (usuario) return <UserAvatar usuario={usuario} size="sm" showName />;
+          if (fallback) return <span className="text-sm text-gray-600">{fallback}</span>;
+          return <span className="text-xs text-gray-400">-</span>;
+        },
+      },
+      {
+        accessorKey: 'tecnico_estudios',
+        header: 'Tecnico',
+        cell: ({ getValue }) => {
+          const { usuario, fallback } = resolveUsuario(getValue<string>(), usuariosMap);
+          if (usuario) return <UserAvatar usuario={usuario} size="sm" showName />;
+          if (fallback) return <span className="text-sm text-gray-600">{fallback}</span>;
+          return <span className="text-xs text-gray-400">-</span>;
+        },
+      },
+      {
+        accessorKey: 'aging_dias',
+        header: 'Aging',
+        cell: ({ getValue }) => {
+          const dias = getValue<number>();
+          if (!dias) return '-';
+          const color =
+            dias > 30 ? 'text-red-500' : dias > 14 ? 'text-yellow-500' : 'text-green-500';
+          return <span className={`font-medium ${color}`}>{dias}d</span>;
+        },
+      },
+      {
+        accessorKey: 'oferta',
+        header: 'Oferta',
+        cell: ({ getValue }) => {
+          const v = getValue<number>();
+          return v ? `${v.toLocaleString('es-ES')} EUR` : '-';
+        },
+      },
+      {
+        id: 'acciones',
+        header: '',
+        cell: ({ row }) => (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleAnalyzeRow(row.original);
+            }}
+            title="Analizar con IA"
+            className="p-1.5 rounded-md text-brand-500 hover:bg-brand-500/10"
+          >
+            <Bot className="w-4 h-4" />
+          </button>
+        ),
+      },
+    ],
+    [usuariosMap],
+  );
 
   return (
     <div className="p-6">
@@ -246,11 +306,7 @@ export default function Contacts() {
           <span className="ml-2 text-gray-400">Cargando...</span>
         </div>
       ) : (
-        <CRMTable
-          data={data}
-          columns={columnsWithActions}
-          onRowClick={handleRowClick}
-        />
+        <CRMTable data={data} columns={columns} onRowClick={handleRowClick} />
       )}
 
       <SolicitudSheet
