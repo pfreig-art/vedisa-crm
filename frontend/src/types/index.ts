@@ -30,6 +30,7 @@ export interface DashboardStats {
   ofertadas: number
   ganadas: number
   perdidas: number
+
   aging_promedio: number
   tasa_conversion: number
   oferta_total: number

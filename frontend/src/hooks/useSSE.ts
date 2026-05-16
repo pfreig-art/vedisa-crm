@@ -30,6 +30,7 @@ export function useSSE(
       } catch {
         // keepalive o malformado, ignorar
       }
+    
     }
 
     es.onerror = () => {

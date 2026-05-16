@@ -295,3 +295,4 @@ async def get_dashboard(db: AsyncSession = Depends(get_session)):
         "tiempo_medio_cierre": tiempo_medio,
         "forecast_mensual": forecast_meses,
     }
+

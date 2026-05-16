@@ -151,6 +151,7 @@ export default function Dashboard() {
         <h2 className="text-base font-semibold text-gray-800 mb-4">Estado del Pipeline</h2>
         <div className="space-y-3">
           {[
+          
             { label: 'En Estudio', value: stats?.en_estudio ?? 0, color: 'bg-indigo-400' },
             { label: 'Ofertadas', value: stats?.ofertadas ?? 0, color: 'bg-amber-400' },
             { label: 'Ganadas', value: stats?.ganadas ?? 0, color: 'bg-emerald-400' },

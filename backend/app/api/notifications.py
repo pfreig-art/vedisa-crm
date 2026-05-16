@@ -30,6 +30,7 @@ async def _sse_gen(queue: asyncio.Queue):
                 yield f"data: {json.dumps(event)}\n\n"
             except asyncio.TimeoutError:
                 yield ": keepalive\n\n"
+            
     except GeneratorExit:
         pass
     finally:
