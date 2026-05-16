@@ -54,7 +54,7 @@ function resolveUsuario(
 }
 
 /** Badge de fecha limite con color segun dias_a_limite */
-function FechaLimiteBadge({ solicitud }: { solicitud: Solicitud }) {
+export function FechaLimiteBadge({ solicitud }: { solicitud: Solicitud }) {
   const { fecha_limite, dias_a_limite } = solicitud;
   if (!fecha_limite) return <span className="text-xs text-gray-400">-</span>;
 
