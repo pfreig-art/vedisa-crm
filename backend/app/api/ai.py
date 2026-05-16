@@ -194,10 +194,10 @@ async def ai_brief(
 ):
     """Genera un brief contextual al abrir el drawer IA (Sprint E2).
 
-    Fuerza provider='openai' (gpt-4o) por decision de diseno: el brief
-    queremos uniforme entre tenants aunque el primary del router sea otro.
-    Cachea 60s por (user.id, mode, context). Si el provider falla o el JSON
-    no parsea, devuelve un fallback graceful con status 200.
+    Usa el provider primario del LLMRouter (decision de Sprint E3:
+    openrouter/sonar como provider oficial del brief). Cachea 60s por
+    (user.id, mode, context). Si el provider falla o el JSON no parsea,
+    devuelve un fallback graceful con status 200.
     """
     mode = (request.mode or "default").strip().lower()
     cache_key = _make_cache_key(current_user.id, mode, request.context)
@@ -227,15 +227,15 @@ async def ai_brief(
 
     start = time.perf_counter()
     parsed: dict | None = None
-    provider_used = "openai"
+    provider_used = ""
     model_used = ""
     tokens_used = 0
     success = True
     error_msg: Optional[str] = None
 
     try:
-        # Forzamos provider='openai' (gpt-4o) por decision de diseno del brief.
-        llm_response = await llm_router.generate(llm_request, provider_name="openai")
+        # Sin provider_name: usa el primary del router (openrouter por defecto).
+        llm_response = await llm_router.generate(llm_request)
         provider_used = llm_response.provider
         model_used = llm_response.model
         tokens_used = llm_response.tokens_used
@@ -260,7 +260,7 @@ async def ai_brief(
         await log_ai_call(
             db,
             endpoint="brief",
-            provider=provider_used or "openai",
+            provider=provider_used or "unknown",
             model=model_used or "unknown",
             prompt_tokens=0,
             completion_tokens=tokens_used,
@@ -279,7 +279,7 @@ async def ai_brief(
         "suggested_questions": parsed.get("suggested_questions", []),
         "chart_specs": parsed.get("chart_specs", []),
         "model": model_used or "fallback",
-        "provider": provider_used or "openai",
+        "provider": provider_used or "unknown",
         "tokens_used": tokens_used,
         "latency_ms": latency_ms,
     }
