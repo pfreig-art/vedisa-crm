@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { crmApi, PipelineColumn, Solicitud } from '../api/crm'
 import { Clock3, Euro, GripVertical, RefreshCw } from 'lucide-react'
+import SolicitudSheet from '../components/SolicitudSheet'
 
 const PRIORIDAD_DOT: Record<string, string> = {
   alta: 'bg-red-500',
@@ -56,9 +57,11 @@ function priorityDotClass(priority?: string | null) {
 function SolicitudCard({
   s,
   onDragStart,
+  onSelect,
 }: {
   s: Solicitud
   onDragStart: (solicitud: Solicitud) => void
+  onSelect: (solicitud: Solicitud) => void
 }) {
   const bar = agingBar(s.aging_dias)
 
@@ -66,7 +69,16 @@ function SolicitudCard({
     <div
       draggable
       onDragStart={() => onDragStart(s)}
-      className="group rounded-xl border border-white/10 bg-slate-900/80 p-3 shadow-sm transition hover:border-white/20 hover:bg-slate-900"
+      onClick={() => onSelect(s)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          onSelect(s)
+        }
+      }}
+      className="group cursor-pointer rounded-xl border border-white/10 bg-slate-900/80 p-3 shadow-sm transition hover:border-white/20 hover:bg-slate-900"
     >
       <div className="mb-2 flex items-start justify-between gap-2">
         <div className="min-w-0">
@@ -114,10 +126,12 @@ function Column({
   col,
   onDropSolicitud,
   onDragStart,
+  onSelect,
 }: {
   col: PipelineColumn
   onDropSolicitud: (estado: string) => void
   onDragStart: (solicitud: Solicitud) => void
+  onSelect: (solicitud: Solicitud) => void
 }) {
   const [over, setOver] = useState(false)
   const style = COL_STYLE[col.estado] ?? DEFAULT_STYLE
@@ -161,7 +175,7 @@ function Column({
 
       <div className="flex max-h-[calc(100vh-240px)] flex-col gap-3 overflow-y-auto p-3">
         {col.items.map((s) => (
-          <SolicitudCard key={s.id} s={s} onDragStart={onDragStart} />
+          <SolicitudCard key={s.id} s={s} onDragStart={onDragStart} onSelect={onSelect} />
         ))}
 
         {col.items.length === 0 && (
@@ -177,6 +191,19 @@ function Column({
 export default function PipelineBoard() {
   const queryClient = useQueryClient()
   const [dragging, setDragging] = useState<Solicitud | null>(null)
+  const [selected, setSelected] = useState<Solicitud | null>(null)
+  const [sheetOpen, setSheetOpen] = useState(false)
+
+  const handleSelect = (s: Solicitud) => {
+    setSelected(s)
+    setSheetOpen(true)
+  }
+
+  const handleSheetClose = () => {
+    setSheetOpen(false)
+    void queryClient.invalidateQueries({ queryKey: ['pipeline'] })
+    void queryClient.invalidateQueries({ queryKey: ['solicitudes'] })
+  }
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: ['pipeline'],
@@ -271,10 +298,18 @@ export default function PipelineBoard() {
               col={col}
               onDropSolicitud={handleDrop}
               onDragStart={(s) => setDragging(s)}
+              onSelect={handleSelect}
             />
           ))}
         </div>
       </div>
+
+      <SolicitudSheet
+        solicitud={selected}
+        open={sheetOpen}
+        onClose={handleSheetClose}
+        mode="edit"
+      />
     </div>
   )
 }
