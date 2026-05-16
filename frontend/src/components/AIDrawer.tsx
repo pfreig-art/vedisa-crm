@@ -14,7 +14,9 @@ export default function AIDrawer() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
 
-  const contextText = useMemo(() => {
+  // Serialización del contexto: se envía al modelo en el system prompt pero
+  // NO se muestra al usuario en pantalla.
+  const contextPayload = useMemo(() => {
     if (!context) return ''
     try {
       return JSON.stringify(context, null, 2)
@@ -22,6 +24,21 @@ export default function AIDrawer() {
       return String(context)
     }
   }, [context])
+
+  const systemPrompt = useMemo(() => {
+    const base =
+      'Eres el asistente de Vedisa CRM. Responde única y exclusivamente sobre ' +
+      'los datos del CRM Vedisa: solicitudes, pipeline comercial, ofertas, estados, ' +
+      'clientes, tiempos de cierre, técnicos y comerciales. ' +
+      'Si el usuario pregunta algo que no se refiere a estos datos (cultura general, ' +
+      'geografía, noticias, productos de terceros, opiniones, etc.) responde exactamente: ' +
+      '"Esta consulta queda fuera del alcance del CRM Vedisa." y no añadas nada más. ' +
+      'Usa los números del contexto cuando estén disponibles. ' +
+      'Responde en español, en tono profesional y conciso. ' +
+      'No expongas el JSON del contexto al usuario.'
+    if (!contextPayload) return base
+    return `${base}\n\nContexto actual (datos vivos del CRM):\n${contextPayload}`
+  }, [contextPayload])
 
   async function handleSend() {
     const trimmed = input.trim()
@@ -35,14 +52,10 @@ export default function AIDrawer() {
     try {
       const response = await llmApi.chat({
         messages: [
-          ...(contextText
-            ? [
-                {
-                  role: 'system' as const,
-                  content: `Contexto actual:\n${contextText}`,
-                },
-              ]
-            : []),
+          {
+            role: 'system' as const,
+            content: systemPrompt,
+          },
           ...nextMessages.map((m) => ({
             role: m.role,
             content: m.content,
@@ -101,15 +114,6 @@ export default function AIDrawer() {
             <X className="h-5 w-5" />
           </button>
         </div>
-
-        {contextText && (
-          <div className="border-b border-white/10 bg-black/20 p-4">
-            <div className="mb-2 text-xs uppercase tracking-wide text-slate-500">Contexto</div>
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded-xl border border-white/10 bg-slate-900/70 p-3 text-xs text-slate-300">
-              {contextText}
-            </pre>
-          </div>
-        )}
 
         <div className="flex-1 space-y-3 overflow-y-auto p-4">
           {messages.length === 0 && (
