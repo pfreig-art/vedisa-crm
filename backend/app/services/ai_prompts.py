@@ -73,6 +73,38 @@ def _truncate(s: str, limit: int) -> str:
     return s[: limit - 50] + "\n[...contexto truncado...]"
 
 
+def _looks_empty(context: dict | None) -> bool:
+    """True si el contexto no aporta datos utiles para el brief.
+
+    Considera vacio: None, dict vacio, o un dict cuyos valores numericos
+    sean todos 0 y cuyas listas/dicts sean todos vacios.
+    """
+    if not context:
+        return True
+    has_signal = False
+    for value in context.values():
+        if isinstance(value, (int, float)):
+            if value:
+                has_signal = True
+                break
+        elif isinstance(value, str):
+            if value.strip():
+                has_signal = True
+                break
+        elif isinstance(value, (list, tuple, set)):
+            if len(value) > 0:
+                has_signal = True
+                break
+        elif isinstance(value, dict):
+            if not _looks_empty(value):
+                has_signal = True
+                break
+        elif value is not None:
+            has_signal = True
+            break
+    return not has_signal
+
+
 def build_brief_prompt(
     mode: str,
     context: dict | None,
@@ -96,7 +128,20 @@ def build_brief_prompt(
 
     ctx_json = json.dumps(context or {}, ensure_ascii=False, indent=2)
     ctx_block = _truncate(ctx_json, MAX_CONTEXT_CHARS)
-    user_content = f"{template}\n\nContexto actual (JSON):\n{ctx_block}"
+
+    empty_hint = ""
+    if _looks_empty(context):
+        empty_hint = (
+            "\n\nIMPORTANTE: el contexto no contiene datos operativos "
+            "(esta vacio o todos los KPIs estan a cero). Indicalo en summary, "
+            "NO inventes cifras y propon en bullets que se cargue/seleccione "
+            "primero el origen de datos (solicitudes, alertas o filtros). "
+            "chart_specs debe ser una lista vacia."
+        )
+
+    user_content = (
+        f"{template}\n\nContexto actual (JSON):\n{ctx_block}{empty_hint}"
+    )
 
     return [
         {"role": "system", "content": system_content},
