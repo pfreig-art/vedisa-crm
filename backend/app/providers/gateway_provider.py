@@ -47,7 +47,12 @@ class GatewayProvider:
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         client, model = self._get_client_and_model()
-        messages = [{"role": m.role, "content": m.content} for m in request.messages]
+        # Aceptar tanto LLMMessage dataclass como dicts crudos {role, content}
+        def _to_dict(m):
+            if isinstance(m, dict):
+                return {"role": m["role"], "content": m["content"]}
+            return {"role": m.role, "content": m.content}
+        messages = [_to_dict(m) for m in request.messages]
 
         start = time.monotonic()
         response = await client.chat.completions.create(

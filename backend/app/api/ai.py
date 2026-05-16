@@ -45,8 +45,8 @@ class ChatResponse(BaseModel):
     content: str
     model: str
     provider: str
-    prompt_tokens: int
-    completion_tokens: int
+    tokens_used: int
+    latency_ms: int
 
 
 # ---- Prompts por intencion -------------------------------------
@@ -82,8 +82,8 @@ async def analyze_solicitud(request: AnalyzeRequest):
     import time
     start = time.perf_counter()
     try:
-        llm_request = LLMRequest(messages=messages, provider=request.provider)
-        response = await llm_router.chat(llm_request, provider_name=request.provider)
+        llm_request = LLMRequest(messages=messages)
+        response = await llm_router.generate(llm_request, provider_name=request.provider)
         latency_ms = int((time.perf_counter() - start) * 1000)
 
         try:
@@ -103,7 +103,7 @@ async def analyze_solicitud(request: AnalyzeRequest):
             confidence=data.get("confidence", 0.7),
             provider=response.provider,
             model=response.model,
-            tokens_used=response.prompt_tokens + response.completion_tokens,
+            tokens_used=response.tokens_used,
             latency_ms=latency_ms,
             sources=[f"solicitud:{request.solicitud_id}"] if request.solicitud_id else [],
         )
@@ -119,18 +119,14 @@ async def chat(request: ChatRequest):
         for m in request.messages
     ]
     try:
-        llm_request = LLMRequest(
-            messages=messages,
-            provider=request.provider,
-            model=request.model,
-        )
-        response = await llm_router.chat(llm_request, provider_name=request.provider)
+        llm_request = LLMRequest(messages=messages)
+        response = await llm_router.generate(llm_request, provider_name=request.provider)
         return ChatResponse(
             content=response.content,
             model=response.model,
             provider=response.provider,
-            prompt_tokens=response.prompt_tokens,
-            completion_tokens=response.completion_tokens,
+            tokens_used=response.tokens_used,
+            latency_ms=response.latency_ms,
         )
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
