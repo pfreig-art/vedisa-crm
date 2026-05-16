@@ -37,8 +37,8 @@ jobs:
 
       - name: Run pytest with coverage
         env:
-          DATABASE_URL: sqlite+aiosqlite:///:memory:
-          SECRET_KEY: ci-secret-not-for-production
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+          SECRET_KEY: "ci-secret-not-for-production"
         run: pytest --cov=app --cov-report=xml --cov-report=term -ra
 
       - name: Upload coverage XML
