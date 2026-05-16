@@ -14,13 +14,37 @@ from app.core.models import Usuario
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
+# bcrypt >= 4.1 lanza ValueError si la password supera 72 bytes; antes
+# truncaba silenciosamente. Centralizamos el truncado para que el resto
+# del codigo no tenga que preocuparse y para no cambiar el comportamiento
+# observable (passwords largas seguian funcionando con sus primeros 72
+# bytes en versiones anteriores).
+BCRYPT_MAX_BYTES = 72
+
+
+def _bcrypt_safe(password: str) -> str:
+    if password is None:
+        return ""
+    encoded = password.encode("utf-8")
+    if len(encoded) <= BCRYPT_MAX_BYTES:
+        return password
+    return encoded[:BCRYPT_MAX_BYTES].decode("utf-8", errors="ignore")
+
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    if not plain or not hashed:
+        return False
+    try:
+        return pwd_context.verify(_bcrypt_safe(plain), hashed)
+    except (ValueError, TypeError):
+        # Hash corrupto, plataforma incompatible con bcrypt o input no
+        # codificable. No tiene sentido devolver 500 al cliente: tratamos
+        # como credencial invalida.
+        return False
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    return pwd_context.hash(_bcrypt_safe(password))
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

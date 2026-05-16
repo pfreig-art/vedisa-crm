@@ -2,13 +2,14 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.config import settings
 from app.core.database import create_db_and_tables
 from app.core.logging_middleware import request_logging_middleware
+from app.core.auth import get_current_user
 from app.api.crm import router as crm_router
 from app.api.ai import router as ai_router
 from app.api.auth import router as auth_router
@@ -45,12 +46,28 @@ app.add_middleware(
 )
 
 # Routers
+#
+# Politica de auth: por contrato del proyecto el login es obligatorio en
+# TODAS las rutas excepto /healthz, /auth/* y /meta/*. Aplicamos la
+# dependencia de autenticacion a nivel de include_router para que
+# cualquier handler nuevo nazca protegido sin depender de que el autor
+# se acuerde de poner Depends(get_current_user) en la firma. La
+# dependencia se cachea por request, asi que repetirla en handlers que
+# ya la tenian no penaliza performance.
+auth_required = [Depends(get_current_user)]
+
 app.include_router(health_router, tags=["Health"])
 app.include_router(meta_router, tags=["Meta"])
 app.include_router(auth_router, prefix="/auth", tags=["Auth"])
-app.include_router(crm_router, prefix="/crm", tags=["CRM"])
-app.include_router(ai_router, prefix="/ai", tags=["IA"])
-app.include_router(notifications_router, tags=["notifications"])
+app.include_router(
+    crm_router, prefix="/crm", tags=["CRM"], dependencies=auth_required,
+)
+app.include_router(
+    ai_router, prefix="/ai", tags=["IA"], dependencies=auth_required,
+)
+app.include_router(
+    notifications_router, tags=["notifications"], dependencies=auth_required,
+)
 
 
 @app.get("/health")
