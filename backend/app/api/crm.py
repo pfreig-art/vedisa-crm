@@ -7,16 +7,24 @@ from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime, date, timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, case, and_
+from sqlalchemy import select, func, and_, or_
 from app.core.database import get_session
 from app.core.models import (
     Solicitud,
     Usuario,
+    AuditLog,
     SolicitudContacto,
     Actuacion,
     SolicitudActuacion,
 )
-from app.core.auth import hash_password, require_role
+from app.core.auth import hash_password, require_role, get_current_user
+from app.services.business_logic import (
+    calcular_financiero,
+    validar_solicitud_para_estado,
+    validar_fechas,
+    calcular_dias_a_limite,
+    registrar_cambios,
+)
 import math
 import uuid as _uuid
 
@@ -45,6 +53,7 @@ class SolicitudItem(BaseModel):
     fecha_limite: Optional[date] = None
     aging_dias: Optional[int] = None
     oferta: Optional[float] = None
+    dias_a_limite: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -94,28 +103,87 @@ class EstadoUpdate(BaseModel):
     kanban_column: Optional[str] = None
     color_estado: Optional[str] = None
 
+
+# -- AuditLog schemas --------------------------------------------------
+
+class AuditLogOut(BaseModel):
+    id: str
+    solicitud_id: str
+    usuario_id: Optional[str] = None
+    usuario_nombre: Optional[str] = None
+    usuario_iniciales: Optional[str] = None
+    usuario_color: Optional[str] = None
+    accion: str
+    campo: Optional[str] = None
+    valor_anterior: Optional[str] = None
+    valor_nuevo: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# -- Helpers ----------------------------------------------------------
+
+def _solicitud_to_front(s: Solicitud) -> dict:
+    """Convierte un objeto Solicitud a dict con dias_a_limite calculado."""
+    d = {}
+    for col in Solicitud.__table__.columns:
+        d[col.name] = getattr(s, col.name)
+    d["dias_a_limite"] = calcular_dias_a_limite(s.fecha_limite)
+    return d
+
+
 # -- Endpoints --------------------------------------------------------
 
 @router.get("/solicitudes", response_model=PaginatedSolicitudes)
 async def list_solicitudes(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
-    estado: Optional[str] = None,
-    comercial: Optional[str] = None,
+    page_size: int = Query(20, ge=1, le=500),
+    # Filtros simples legacy
     search: Optional[str] = None,
+    # Sprint C: filtros multi-valor
+    estado: List[str] = Query(default=[]),
+    prioridad: List[str] = Query(default=[]),
+    comercial: List[str] = Query(default=[]),
+    tecnico: List[str] = Query(default=[]),
+    actuacion: List[str] = Query(default=[]),
+    fecha_desde: Optional[date] = None,
+    fecha_hasta: Optional[date] = None,
     db: AsyncSession = Depends(get_session),
 ):
     q = select(Solicitud)
     filters = []
+
+    # Filtros multi-valor (OR dentro del filtro, AND entre filtros)
     if estado:
-        filters.append(Solicitud.estado == estado)
+        filters.append(or_(*[Solicitud.estado == e for e in estado]))
+    if prioridad:
+        filters.append(or_(*[Solicitud.prioridad == p for p in prioridad]))
     if comercial:
-        filters.append(Solicitud.comercial == comercial)
+        filters.append(or_(*[Solicitud.comercial == c for c in comercial]))
+    if tecnico:
+        filters.append(or_(*[Solicitud.tecnico_estudios == t for t in tecnico]))
     if search:
         filters.append(
             Solicitud.nombre_corto.ilike(f"%{search}%")
             | Solicitud.codigo.ilike(f"%{search}%")
         )
+    if fecha_desde:
+        filters.append(Solicitud.fecha_solicitud >= fecha_desde)
+    if fecha_hasta:
+        filters.append(Solicitud.fecha_solicitud <= fecha_hasta)
+
+    # Filtro por actuacion: requiere JOIN con solicitud_actuaciones
+    if actuacion:
+        actuacion_subq = (
+            select(SolicitudActuacion.solicitud_id)
+            .where(SolicitudActuacion.actuacion_id.in_(actuacion))
+            .distinct()
+            .scalar_subquery()
+        )
+        filters.append(Solicitud.id.in_(actuacion_subq))
+
     if filters:
         q = q.where(and_(*filters))
 
@@ -125,7 +193,13 @@ async def list_solicitudes(
 
     q = q.offset((page - 1) * page_size).limit(page_size)
     result = await db.execute(q)
-    items = result.scalars().all()
+    items_raw = result.scalars().all()
+
+    # Enriquecer con dias_a_limite
+    items = []
+    for s in items_raw:
+        item_dict = _solicitud_to_front(s)
+        items.append(SolicitudItem(**{k: item_dict[k] for k in SolicitudItem.model_fields if k in item_dict}))
 
     return PaginatedSolicitudes(
         items=items,
@@ -182,13 +256,60 @@ async def export_solicitudes(
             headers={"Content-Disposition": "attachment; filename=solicitudes.csv"},
         )
 
+@router.get("/solicitudes/{solicitud_id}/historial", response_model=List[AuditLogOut])
+async def get_historial(
+    solicitud_id: str,
+    db: AsyncSession = Depends(get_session),
+    current_user: Usuario = Depends(get_current_user),
+):
+    """Historial de auditoria de una solicitud, ordenado por fecha desc."""
+    # Verificar que la solicitud existe
+    sol = (await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))).scalar_one_or_none()
+    if not sol:
+        raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+
+    logs_result = await db.execute(
+        select(AuditLog)
+        .where(AuditLog.solicitud_id == solicitud_id)
+        .order_by(AuditLog.created_at.desc())
+    )
+    logs = logs_result.scalars().all()
+
+    # Cargar usuarios para enriquecer la respuesta
+    usuario_ids = {log.usuario_id for log in logs if log.usuario_id}
+    usuarios_map: dict = {}
+    if usuario_ids:
+        u_result = await db.execute(select(Usuario).where(Usuario.id.in_(usuario_ids)))
+        for u in u_result.scalars().all():
+            usuarios_map[u.id] = u
+
+    out = []
+    for log in logs:
+        u = usuarios_map.get(log.usuario_id) if log.usuario_id else None
+        out.append(AuditLogOut(
+            id=log.id,
+            solicitud_id=log.solicitud_id,
+            usuario_id=log.usuario_id,
+            usuario_nombre=u.nombre if u else None,
+            usuario_iniciales=u.iniciales if u else None,
+            usuario_color=u.color if u else None,
+            accion=log.accion,
+            campo=log.campo,
+            valor_anterior=log.valor_anterior,
+            valor_nuevo=log.valor_nuevo,
+            created_at=log.created_at,
+        ))
+    return out
+
+
 @router.get("/solicitudes/{solicitud_id}", response_model=SolicitudFront)
 async def get_solicitud(solicitud_id: str, db: AsyncSession = Depends(get_session)):
     result = await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))
     s = result.scalar_one_or_none()
     if not s:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
-    return s
+    d = _solicitud_to_front(s)
+    return SolicitudFront(**{k: d[k] for k in SolicitudFront.model_fields if k in d})
 
 @router.get("/solicitudes/{solicitud_id}/context")
 async def get_solicitud_context(solicitud_id: str, db: AsyncSession = Depends(get_session)):
@@ -243,20 +364,188 @@ async def update_estado(
     solicitud_id: str,
     body: EstadoUpdate,
     db: AsyncSession = Depends(get_session),
+    current_user: Usuario = Depends(get_current_user),
 ):
     result = await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))
     s = result.scalar_one_or_none()
     if not s:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+
+    estado_anterior = s.estado
     s.estado = body.estado
     if body.kanban_column:
         s.kanban_column = body.kanban_column
     if body.color_estado:
         s.color_estado = body.color_estado
     s.updated_at = datetime.utcnow()
+    await db.flush()
+
+    # Auditoria del cambio de estado
+    await registrar_cambios(
+        db=db,
+        solicitud_id=solicitud_id,
+        usuario_id=current_user.id,
+        accion="estado_change",
+        cambios={"estado": (estado_anterior, body.estado)},
+    )
+
     await db.commit()
     await db.refresh(s)
     return s
+
+
+# -- Sprint C: Alertas ------------------------------------------------
+
+@router.get("/alertas")
+async def get_alertas(
+    db: AsyncSession = Depends(get_session),
+    current_user: Usuario = Depends(get_current_user),
+):
+    """Devuelve solicitudes vencidas y proximas a vencer.
+
+    Solo incluye solicitudes en estados 'En Estudio' o 'Enviada'.
+    Si el usuario no es admin, filtra a solo sus solicitudes.
+    """
+    hoy = date.today()
+    limite_proximas = hoy + timedelta(days=7)
+
+    q = select(Solicitud).where(
+        Solicitud.estado.in_(["En Estudio", "Enviada"]),
+        Solicitud.fecha_limite.isnot(None),
+    )
+
+    # Filtrar por usuario si no es admin
+    if current_user.rol != "admin":
+        q = q.where(
+            or_(
+                Solicitud.comercial == current_user.id,
+                Solicitud.tecnico_estudios == current_user.id,
+            )
+        )
+
+    result = await db.execute(q)
+    all_sols = result.scalars().all()
+
+    # Cargar comerciales para label
+    comercial_ids = {s.comercial for s in all_sols if s.comercial}
+    comerciales_map: dict = {}
+    if comercial_ids:
+        u_result = await db.execute(select(Usuario).where(Usuario.id.in_(comercial_ids)))
+        for u in u_result.scalars().all():
+            comerciales_map[u.id] = u.nombre
+
+    vencidas = []
+    proximas = []
+
+    for s in all_sols:
+        if s.fecha_limite is None:
+            continue
+        dias = (s.fecha_limite - hoy).days
+        item = {
+            "id": s.id,
+            "codigo": s.codigo,
+            "nombre_corto": s.nombre_corto,
+            "fecha_limite": s.fecha_limite.isoformat(),
+            "dias_a_limite": dias,
+            "comercial": comerciales_map.get(s.comercial or "", None) if s.comercial else None,
+        }
+        if dias < 0:
+            vencidas.append(item)
+        elif dias <= 7:
+            proximas.append(item)
+
+    # Ordenar: vencidas de mas antigua a mas reciente, proximas de mas proxima a mas lejana
+    vencidas.sort(key=lambda x: x["dias_a_limite"])
+    proximas.sort(key=lambda x: x["dias_a_limite"])
+
+    return {
+        "vencidas": vencidas,
+        "proximas": proximas,
+        "total_vencidas": len(vencidas),
+        "total_proximas": len(proximas),
+    }
+
+
+# -- Sprint C: Dashboard extended -------------------------------------
+
+@router.get("/dashboard/extended")
+async def get_dashboard_extended(db: AsyncSession = Depends(get_session)):
+    """KPIs extendidos: top comerciales, mix actuaciones, heatmap mensual."""
+    result = await db.execute(select(Solicitud))
+    all_rows = result.scalars().all()
+
+    hoy = date.today()
+
+    # Heatmap: ultimos 12 meses
+    heatmap = []
+    for i in range(11, -1, -1):
+        mes = hoy.month - i
+        anio = hoy.year
+        while mes <= 0:
+            mes += 12
+            anio -= 1
+        mes_inicio = date(anio, mes, 1)
+        if mes == 12:
+            mes_fin = date(anio + 1, 1, 1)
+        else:
+            mes_fin = date(anio, mes + 1, 1)
+        count = sum(
+            1 for s in all_rows
+            if s.fecha_solicitud and mes_inicio <= s.fecha_solicitud < mes_fin
+        )
+        heatmap.append({
+            "mes": mes_inicio.strftime("%b %Y"),
+            "mes_key": mes_inicio.strftime("%Y-%m"),
+            "count": count,
+        })
+
+    # Top 5 comerciales por oferta adjudicada
+    comercial_totales: dict = {}
+    for s in all_rows:
+        if s.estado == "Adjudicada" and s.comercial and s.oferta:
+            comercial_totales[s.comercial] = comercial_totales.get(s.comercial, 0) + s.oferta
+
+    top_ids = sorted(comercial_totales.keys(), key=lambda k: comercial_totales[k], reverse=True)[:5]
+    top_comerciales = []
+    if top_ids:
+        u_result = await db.execute(select(Usuario).where(Usuario.id.in_(top_ids)))
+        usuarios_map = {u.id: u for u in u_result.scalars().all()}
+        for uid in top_ids:
+            u = usuarios_map.get(uid)
+            top_comerciales.append({
+                "id": uid,
+                "nombre": u.nombre if u else uid,
+                "iniciales": u.iniciales if u else None,
+                "color": u.color if u else None,
+                "oferta_total": round(comercial_totales[uid], 2),
+            })
+
+    # Mix actuaciones (todas las solicitudes)
+    act_result = await db.execute(
+        select(SolicitudActuacion.actuacion_id, func.count().label("cnt"))
+        .group_by(SolicitudActuacion.actuacion_id)
+        .order_by(func.count().desc())
+        .limit(10)
+    )
+    act_rows = act_result.all()
+    actuacion_ids = [r[0] for r in act_rows]
+    mix_actuaciones = []
+    if actuacion_ids:
+        ac_result = await db.execute(select(Actuacion).where(Actuacion.id.in_(actuacion_ids)))
+        act_map = {a.id: a.nombre for a in ac_result.scalars().all()}
+        for aid, cnt in act_rows:
+            mix_actuaciones.append({
+                "id": aid,
+                "nombre": act_map.get(aid, aid),
+                "count": cnt,
+            })
+
+    return {
+        "heatmap": heatmap,
+        "top_comerciales": top_comerciales,
+        "mix_actuaciones": mix_actuaciones,
+    }
+
 
 @router.get("/pipeline")
 async def get_pipeline(db: AsyncSession = Depends(get_session)):
@@ -264,9 +553,10 @@ async def get_pipeline(db: AsyncSession = Depends(get_session)):
     all_rows = result.scalars().all()
     columnas = [
         {"estado": "En Estudio", "label": "En Estudio", "color": "#6366f1"},
-        {"estado": "Ofertada", "label": "Ofertada", "color": "#f59e0b"},
-        {"estado": "Ganada", "label": "Ganada", "color": "#10b981"},
-        {"estado": "Perdida", "label": "Perdida", "color": "#ef4444"},
+        {"estado": "Enviada", "label": "Enviada", "color": "#f59e0b"},
+        {"estado": "Adjudicada", "label": "Adjudicada", "color": "#10b981"},
+        {"estado": "Rechazada", "label": "Rechazada", "color": "#ef4444"},
+        {"estado": "Descartada", "label": "Descartada", "color": "#6b7280"},
     ]
     pipeline = []
     for col in columnas:
@@ -289,14 +579,14 @@ async def get_dashboard(db: AsyncSession = Depends(get_session)):
 
     total = len(all_rows)
     en_estudio = sum(1 for s in all_rows if s.estado == "En Estudio")
-    ofertadas = sum(1 for s in all_rows if s.estado == "Ofertada")
-    ganadas = sum(1 for s in all_rows if s.estado == "Ganada")
-    perdidas = sum(1 for s in all_rows if s.estado == "Perdida")
+    ofertadas = sum(1 for s in all_rows if s.estado == "Enviada")
+    ganadas = sum(1 for s in all_rows if s.estado == "Adjudicada")
+    perdidas = sum(1 for s in all_rows if s.estado in ("Rechazada", "Descartada"))
     tasa_conversion = round(ganadas / total, 4) if total > 0 else 0.0
     oferta_total = round(sum(s.oferta or 0 for s in all_rows), 2)
 
     # Tiempo medio de cierre (dias)
-    cerradas = [s for s in all_rows if s.estado in ("Ganada", "Perdida") and s.fecha_solicitud]
+    cerradas = [s for s in all_rows if s.estado in ("Adjudicada", "Rechazada", "Descartada") and s.fecha_solicitud]
     if cerradas:
         tiempo_medio = round(
             sum((date.today() - s.fecha_solicitud).days for s in cerradas) / len(cerradas), 1
@@ -312,7 +602,6 @@ async def get_dashboard(db: AsyncSession = Depends(get_session)):
     hoy = date.today()
     forecast_meses = []
     for i in range(5, -1, -1):
-        # Primer dia del mes i meses atras
         mes = hoy.month - i
         anio = hoy.year
         while mes <= 0:
@@ -325,7 +614,7 @@ async def get_dashboard(db: AsyncSession = Depends(get_session)):
             mes_fin = date(anio, mes + 1, 1)
         ganadas_mes = [
             s for s in all_rows
-            if s.estado == "Ganada"
+            if s.estado == "Adjudicada"
             and s.fecha_solicitud
             and mes_inicio <= s.fecha_solicitud < mes_fin
         ]
@@ -417,17 +706,38 @@ class SolicitudUpdate(BaseModel):
 
 import uuid
 
+
 @router.post("/solicitudes", status_code=201)
 async def create_solicitud(
     body: SolicitudCreate,
     db: AsyncSession = Depends(get_session),
+    current_user: Optional[Usuario] = Depends(get_current_user),
 ):
-    """Crea una nueva solicitud."""
+    """Crea una nueva solicitud con validaciones y calculo financiero."""
     now = datetime.utcnow()
-    # Auto-generar codigo si no se proporciona
     codigo = body.codigo or f"SOL-{now.year}-{str(uuid.uuid4())[:4].upper()}"
     data = body.model_dump(exclude_unset=True)
     data.pop("codigo", None)
+
+    # Validaciones de estado
+    estado = data.get("estado", "En Estudio")
+    errores_estado = validar_solicitud_para_estado(data, estado)
+    if errores_estado:
+        raise HTTPException(status_code=422, detail={"errors": errores_estado})
+
+    # Validaciones de fechas
+    campos_fecha = {k: data.get(k) for k in [
+        "fecha_solicitud", "fecha_reunion", "fecha_visita",
+        "fecha_enviado", "fecha_cierre_cliente", "fecha_limite",
+    ]}
+    errores_fechas = validar_fechas(campos_fecha)
+    if errores_fechas:
+        raise HTTPException(status_code=422, detail={"errors": errores_fechas})
+
+    # Calcular financiero (backend es fuente de verdad)
+    fin = calcular_financiero(data.get("oferta"), data.get("coste"))
+    data.update(fin)
+
     s = Solicitud(
         id=str(uuid.uuid4()),
         codigo=codigo,
@@ -436,6 +746,17 @@ async def create_solicitud(
         **data,
     )
     db.add(s)
+    await db.flush()
+
+    # Auditoria
+    await registrar_cambios(
+        db=db,
+        solicitud_id=s.id,
+        usuario_id=current_user.id if current_user else None,
+        accion="create",
+        cambios={},
+    )
+
     await db.commit()
     await db.refresh(s)
     return s
@@ -445,15 +766,72 @@ async def update_solicitud(
     solicitud_id: str,
     body: SolicitudUpdate,
     db: AsyncSession = Depends(get_session),
+    current_user: Optional[Usuario] = Depends(get_current_user),
 ):
-    """Actualiza cualquier campo de una solicitud."""
+    """Actualiza cualquier campo de una solicitud con validaciones y calculo financiero."""
     result = await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))
     s = result.scalar_one_or_none()
     if not s:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
-    for field, value in body.model_dump(exclude_unset=True).items():
+
+    updates = body.model_dump(exclude_unset=True)
+
+    # Estado a usar para validaciones (el nuevo si se cambia, sino el existente)
+    estado = updates.get("estado", s.estado)
+
+    # Construir dict completo con valores actuales + updates para validar
+    current_dict: dict = {
+        "fecha_solicitud": s.fecha_solicitud,
+        "fecha_reunion": s.fecha_reunion,
+        "fecha_visita": s.fecha_visita,
+        "fecha_enviado": s.fecha_enviado,
+        "fecha_cierre_cliente": s.fecha_cierre_cliente,
+        "fecha_limite": s.fecha_limite,
+        "oferta": s.oferta,
+        "coste": s.coste,
+    }
+    merged = {**current_dict, **updates}
+
+    # Validaciones de estado
+    errores_estado = validar_solicitud_para_estado(merged, estado)
+    if errores_estado:
+        raise HTTPException(status_code=422, detail={"errors": errores_estado})
+
+    # Validaciones de fechas
+    errores_fechas = validar_fechas({k: merged.get(k) for k in [
+        "fecha_solicitud", "fecha_reunion", "fecha_visita",
+        "fecha_enviado", "fecha_cierre_cliente", "fecha_limite",
+    ]})
+    if errores_fechas:
+        raise HTTPException(status_code=422, detail={"errors": errores_fechas})
+
+    # Calcular financiero
+    oferta = updates.get("oferta", s.oferta)
+    coste = updates.get("coste", s.coste)
+    fin = calcular_financiero(oferta, coste)
+    updates.update(fin)
+
+    # Registrar cambios para auditoria
+    cambios: dict = {}
+    for field, new_val in updates.items():
+        old_val = getattr(s, field, None)
+        if old_val != new_val:
+            cambios[field] = (old_val, new_val)
+
+    for field, value in updates.items():
         setattr(s, field, value)
     s.updated_at = datetime.utcnow()
+    await db.flush()
+
+    if cambios:
+        await registrar_cambios(
+            db=db,
+            solicitud_id=solicitud_id,
+            usuario_id=current_user.id if current_user else None,
+            accion="update",
+            cambios=cambios,
+        )
+
     await db.commit()
     await db.refresh(s)
     return s
@@ -462,12 +840,24 @@ async def update_solicitud(
 async def delete_solicitud(
     solicitud_id: str,
     db: AsyncSession = Depends(get_session),
+    current_user: Optional[Usuario] = Depends(get_current_user),
 ):
     """Elimina una solicitud."""
     result = await db.execute(select(Solicitud).where(Solicitud.id == solicitud_id))
     s = result.scalar_one_or_none()
     if not s:
         raise HTTPException(status_code=404, detail="Solicitud no encontrada")
+
+    # Auditoria antes de borrar
+    await registrar_cambios(
+        db=db,
+        solicitud_id=solicitud_id,
+        usuario_id=current_user.id if current_user else None,
+        accion="delete",
+        cambios={},
+    )
+    await db.flush()
+
     await db.delete(s)
     await db.commit()
 

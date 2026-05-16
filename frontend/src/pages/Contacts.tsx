@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import CRMTable from '../components/CRMTable';
 import SolicitudSheet from '../components/SolicitudSheet';
+import SolicitudesFilters from '../components/SolicitudesFilters';
 import UserAvatar from '../components/UserAvatar';
 import { ColumnDef } from '@tanstack/react-table';
 import { useAIStore } from '../store/aiStore';
 import { crmApi, Solicitud, Usuario } from '../api/crm';
-import { useUsuariosMap } from '../hooks/useCatalogs';
-import { Search, RefreshCw, Download, Plus, Bot } from 'lucide-react';
+import { useUsuariosMap, useActuaciones } from '../hooks/useCatalogs';
+import { Search, RefreshCw, Download, Plus, Bot, SlidersHorizontal } from 'lucide-react';
 
 const PRIORIDAD_COLORS: Record<string, string> = {
   alta: 'bg-red-100 text-red-700',
@@ -14,13 +16,12 @@ const PRIORIDAD_COLORS: Record<string, string> = {
   baja: 'bg-gray-100 text-gray-600',
 };
 
-const ESTADO_COLORS: Record<string, string> = {
-  recibida: 'bg-blue-100 text-blue-700',
-  en_estudio: 'bg-indigo-100 text-indigo-700',
-  ofertada: 'bg-purple-100 text-purple-700',
-  ganada: 'bg-green-100 text-green-700',
-  perdida: 'bg-red-100 text-red-700',
-  descartada: 'bg-gray-100 text-gray-500',
+const ESTADO_META: Record<string, { bg: string; text: string }> = {
+  'En Estudio': { bg: 'bg-indigo-100', text: 'text-indigo-700' },
+  Enviada: { bg: 'bg-amber-100', text: 'text-amber-700' },
+  Adjudicada: { bg: 'bg-green-100', text: 'text-green-700' },
+  Rechazada: { bg: 'bg-red-100', text: 'text-red-700' },
+  Descartada: { bg: 'bg-gray-100', text: 'text-gray-500' },
 };
 
 /** Compone una dirección legible a partir de los campos individuales. */
@@ -45,33 +46,84 @@ function resolveUsuario(
   if (!raw) return { usuario: null, fallback: null };
   const trimmed = raw.trim();
   if (!trimmed) return { usuario: null, fallback: null };
-  // UUID v4: usar mapa
   if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) {
     const u = map.get(trimmed);
     return { usuario: u ?? null, fallback: u ? null : '·' };
   }
-  // Valor legacy en texto plano
   return { usuario: null, fallback: trimmed };
 }
 
+/** Badge de fecha limite con color segun dias_a_limite */
+function FechaLimiteBadge({ solicitud }: { solicitud: Solicitud }) {
+  const { fecha_limite, dias_a_limite } = solicitud;
+  if (!fecha_limite) return <span className="text-xs text-gray-400">-</span>;
+
+  const dias = dias_a_limite ?? null;
+  let colorClass = 'text-gray-300';
+  let bgClass = '';
+  if (dias !== null) {
+    if (dias < 0) {
+      colorClass = 'text-red-400 font-semibold';
+      bgClass = 'bg-red-500/10 rounded px-1';
+    } else if (dias <= 7) {
+      colorClass = 'text-amber-400 font-semibold';
+      bgClass = 'bg-amber-500/10 rounded px-1';
+    }
+  }
+
+  return (
+    <span className={`text-xs ${colorClass} ${bgClass}`} title={dias !== null ? `${dias} dias` : ''}>
+      {fecha_limite}
+      {dias !== null && (
+        <span className="ml-1 text-[10px] opacity-70">
+          {dias < 0 ? `(${dias}d)` : dias <= 7 ? `(${dias}d)` : ''}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export default function Contacts() {
+  const [searchParams] = useSearchParams();
   const [data, setData] = useState<Solicitud[]>([]);
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [search, setSearch] = useState('');
   const [total, setTotal] = useState(0);
+  const [showFilters, setShowFilters] = useState(false);
   const { setContext, openDrawer } = useAIStore();
-  const { map: usuariosMap } = useUsuariosMap();
+  const { map: usuariosMap, data: usuariosData = [] } = useUsuariosMap();
+  const { data: actuaciones = [] } = useActuaciones();
 
   // Estado del sheet de detalle / creación
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetMode, setSheetMode] = useState<'create' | 'edit'>('edit');
   const [selected, setSelected] = useState<Solicitud | null>(null);
 
+  // Construir params de filtros desde URL
+  const filterParams = useMemo(() => {
+    const p: Record<string, unknown> = { search, page_size: 100 };
+    const estados = searchParams.getAll('estado');
+    const prioridades = searchParams.getAll('prioridad');
+    const comerciales = searchParams.getAll('comercial');
+    const tecnicos = searchParams.getAll('tecnico');
+    const actuacionFiltros = searchParams.getAll('actuacion');
+    const fechaDesde = searchParams.get('fecha_desde');
+    const fechaHasta = searchParams.get('fecha_hasta');
+    if (estados.length) p.estado = estados;
+    if (prioridades.length) p.prioridad = prioridades;
+    if (comerciales.length) p.comercial = comerciales;
+    if (tecnicos.length) p.tecnico = tecnicos;
+    if (actuacionFiltros.length) p.actuacion = actuacionFiltros;
+    if (fechaDesde) p.fecha_desde = fechaDesde;
+    if (fechaHasta) p.fecha_hasta = fechaHasta;
+    return p;
+  }, [search, searchParams]);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await crmApi.listSolicitudes({ search, page_size: 50 });
+      const result = await crmApi.listSolicitudes(filterParams);
       setData(result.items);
       setTotal(result.total);
     } catch (err) {
@@ -79,20 +131,18 @@ export default function Contacts() {
     } finally {
       setLoading(false);
     }
-  }, [search]);
+  }, [filterParams]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  // Click fila -> abrir detalle/edición
   const handleRowClick = (row: Solicitud) => {
     setSelected(row);
     setSheetMode('edit');
     setSheetOpen(true);
   };
 
-  // Botón "Analizar con IA" en una fila concreta
   const handleAnalyzeRow = async (row: Solicitud) => {
     try {
       const ctx = await crmApi.getAIContext(row.id);
@@ -135,7 +185,6 @@ export default function Contacts() {
     }
   };
 
-  // Columnas — dependen de usuariosMap, así que se construyen con useMemo
   const columns = useMemo<ColumnDef<Solicitud>[]>(
     () => [
       {
@@ -166,13 +215,14 @@ export default function Contacts() {
         header: 'Estado',
         cell: ({ getValue }) => {
           const estado = getValue<string>();
+          const meta = ESTADO_META[estado];
           return (
             <span
               className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                ESTADO_COLORS[estado] || 'bg-gray-100 text-gray-600'
+                meta ? `${meta.bg} ${meta.text}` : 'bg-gray-100 text-gray-600'
               }`}
             >
-              {estado?.replace('_', ' ')}
+              {estado}
             </span>
           );
         },
@@ -212,6 +262,11 @@ export default function Contacts() {
           if (fallback) return <span className="text-sm text-gray-600">{fallback}</span>;
           return <span className="text-xs text-gray-400">-</span>;
         },
+      },
+      {
+        accessorKey: 'fecha_limite',
+        header: 'Fecha limite',
+        cell: ({ row }) => <FechaLimiteBadge solicitud={row.original} />,
       },
       {
         accessorKey: 'aging_dias',
@@ -261,6 +316,15 @@ export default function Contacts() {
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={() => setShowFilters((v) => !v)}
+            className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm ${
+              showFilters ? 'bg-indigo-700 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+            }`}
+          >
+            <SlidersHorizontal className="w-4 h-4" />
+            Filtros
+          </button>
+          <button
             onClick={handleExportXlsx}
             disabled={exporting || loading}
             title="Exportar a Excel"
@@ -299,6 +363,12 @@ export default function Contacts() {
           />
         </div>
       </div>
+
+      {showFilters && (
+        <div className="mb-4">
+          <SolicitudesFilters usuarios={usuariosData} actuaciones={actuaciones} />
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-20">

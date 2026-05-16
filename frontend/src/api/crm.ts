@@ -46,6 +46,8 @@ export interface Solicitud {
   fecha_limite?: string | null
   aging_dias?: number | null
   oferta?: number | null
+  // Sprint C
+  dias_a_limite?: number | null
   // Legacy
   estudio_direccion?: string | null
   presupuesto?: string | null
@@ -65,6 +67,65 @@ export interface Solicitud {
   coste?: number | null
   coeficiente?: number | null
   margen_pct?: number | null
+}
+
+// Sprint C: Historial de auditoria
+export interface AuditLogEntry {
+  id: string
+  solicitud_id: string
+  usuario_id?: string | null
+  usuario_nombre?: string | null
+  usuario_iniciales?: string | null
+  usuario_color?: string | null
+  accion: string
+  campo?: string | null
+  valor_anterior?: string | null
+  valor_nuevo?: string | null
+  created_at: string
+}
+
+// Sprint C: Alertas
+export interface AlertaItem {
+  id: string
+  codigo: string
+  nombre_corto: string
+  fecha_limite: string
+  dias_a_limite: number
+  comercial?: string | null
+}
+
+export interface Alertas {
+  vencidas: AlertaItem[]
+  proximas: AlertaItem[]
+  total_vencidas: number
+  total_proximas: number
+}
+
+// Sprint C: Dashboard extended
+export interface TopComercial {
+  id: string
+  nombre: string
+  iniciales?: string | null
+  color?: string | null
+  oferta_total: number
+}
+
+export interface MixActuacion {
+  id: string
+  nombre: string
+  count: number
+}
+
+export interface HeatmapItem {
+  mes: string
+  mes_key: string
+  count: number
+}
+
+export interface DashboardExtended {
+  heatmap: HeatmapItem[]
+  top_comerciales: TopComercial[]
+  mix_actuaciones: MixActuacion[]
 }
 
 export interface SolicitudCreate {
@@ -225,7 +286,20 @@ export interface EstadoUpdatePayload {
 export const crmApi = {
   // -- Solicitudes --
   listSolicitudes: async (params?: Record<string, unknown>): Promise<PaginatedSolicitudes> => {
-    const { data } = await api.get('/crm/solicitudes', { params })
+    const { data } = await api.get('/crm/solicitudes', {
+      params,
+      paramsSerializer: (p) => {
+        const parts: string[] = []
+        for (const [k, v] of Object.entries(p)) {
+          if (Array.isArray(v)) {
+            v.forEach((item) => parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(item))}`))
+          } else if (v !== undefined && v !== null) {
+            parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+          }
+        }
+        return parts.join('&')
+      },
+    })
     return {
       ...data,
       pages: data.total_pages,
@@ -345,6 +419,24 @@ export const crmApi = {
 
   setSolicitudActuaciones: async (solicitudId: string, actuacionIds: string[]): Promise<void> => {
     await api.put(`/crm/solicitudes/${solicitudId}/actuaciones`, { actuacion_ids: actuacionIds })
+  },
+
+  // -- Sprint C: Historial de auditoria --
+  getHistorial: async (solicitudId: string): Promise<AuditLogEntry[]> => {
+    const { data } = await api.get(`/crm/solicitudes/${solicitudId}/historial`)
+    return data as AuditLogEntry[]
+  },
+
+  // -- Sprint C: Alertas --
+  getAlertas: async (): Promise<Alertas> => {
+    const { data } = await api.get('/crm/alertas')
+    return data as Alertas
+  },
+
+  // -- Sprint C: Dashboard extended --
+  getDashboardExtended: async (): Promise<DashboardExtended> => {
+    const { data } = await api.get('/crm/dashboard/extended')
+    return data as DashboardExtended
   },
 }
 

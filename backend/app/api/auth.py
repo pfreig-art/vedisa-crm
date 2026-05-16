@@ -1,7 +1,8 @@
-"""Auth endpoints: login, me, register (admin only)."""
+"""Auth endpoints: login, me, register (admin only), change-password."""
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.core.database import get_session
@@ -68,6 +69,29 @@ async def login(
 @router.get("/me", response_model=UserOut)
 async def me(current_user: Usuario = Depends(get_current_user)):
     return current_user
+
+
+class ChangePasswordIn(BaseModel):
+    password_actual: str
+    password_nueva: str
+
+
+@router.post("/change-password")
+async def change_password(
+    payload: ChangePasswordIn,
+    db: AsyncSession = Depends(get_session),
+    current_user: Usuario = Depends(get_current_user),
+):
+    """Permite al usuario autenticado cambiar su propia contrasena."""
+    if not verify_password(payload.password_actual, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Password actual incorrecta")
+    if len(payload.password_nueva) < 6:
+        raise HTTPException(status_code=400, detail="Minimo 6 caracteres")
+    current_user.hashed_password = hash_password(payload.password_nueva)
+    current_user.updated_at = datetime.utcnow()
+    db.add(current_user)
+    await db.commit()
+    return {"ok": True}
 
 
 @router.post("/register", response_model=UserOut, status_code=201)

@@ -1,14 +1,16 @@
 import { useEffect } from 'react'
-import { Routes, Route, NavLink, Navigate, useLocation } from 'react-router-dom'
+import { Routes, Route, NavLink, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
 import Contacts from './pages/Contacts'
 import SettingsPage from './pages/Settings'
 import PipelineBoard from './pages/PipelineBoard'
 import Login from './pages/Login'
 import Usuarios from './pages/Usuarios'
+import Perfil from './pages/Perfil'
 import { useAIStore } from './store/aiStore'
 import { useAuthStore } from './store/authStore'
 import AIDrawer from './components/AIDrawer'
+import AlertasCampana from './components/AlertasCampana'
 import { LayoutDashboard, Users, Settings, Bot, Zap, LogOut, Loader2, UserCog } from 'lucide-react'
 
 const baseNavItems = [
@@ -20,6 +22,7 @@ const baseNavItems = [
 ]
 
 function ProtectedShell({ children }: { children: React.ReactNode }) {
+  const navigate = useNavigate()
   const { isOpen } = useAIStore()
   const { user, logout } = useAuthStore()
   const navItems = baseNavItems.filter((item) => !item.adminOnly || user?.rol === 'admin')
@@ -54,7 +57,12 @@ function ProtectedShell({ children }: { children: React.ReactNode }) {
 
         {user && (
           <div className="p-4 border-t border-gray-700">
-            <div className="mb-2">
+            {/* Bloque de usuario clicable -> /perfil */}
+            <button
+              type="button"
+              onClick={() => navigate('/perfil')}
+              className="mb-2 w-full text-left rounded-md px-2 py-1.5 hover:bg-gray-700 transition"
+            >
               <div className="truncate text-sm font-medium text-white" title={user.nombre}>
                 {user.nombre}
               </div>
@@ -68,20 +76,24 @@ function ProtectedShell({ children }: { children: React.ReactNode }) {
                   {user.rol}
                 </span>
               </div>
-            </div>
+            </button>
+
+            {/* Campana de alertas */}
+            <AlertasCampana />
+
             <button
               type="button"
               onClick={logout}
               className="mt-2 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-gray-300 hover:bg-gray-700"
             >
               <LogOut className="h-3.5 w-3.5" />
-              Cerrar sesión
+              Cerrar sesion
             </button>
           </div>
         )}
 
         <div className="p-4 border-t border-gray-700 text-xs text-gray-500">
-          v0.1.0 &ndash; Multi-LLM CRM
+          v0.2.0 &ndash; Sprint C
         </div>
       </aside>
 
@@ -102,7 +114,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-950 text-slate-400">
         <Loader2 className="h-5 w-5 animate-spin" />
-        <span className="ml-2 text-sm">Verificando sesión…</span>
+        <span className="ml-2 text-sm">Verificando sesion…</span>
       </div>
     )
   }
@@ -165,6 +177,14 @@ export default function App() {
         element={
           <RequireAuth>
             <Usuarios />
+          </RequireAuth>
+        }
+      />
+      <Route
+        path="/perfil"
+        element={
+          <RequireAuth>
+            <Perfil />
           </RequireAuth>
         }
       />

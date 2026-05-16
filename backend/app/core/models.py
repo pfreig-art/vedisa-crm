@@ -1,6 +1,6 @@
 """SQLModel ORM models for Vedisa CRM."""
 from datetime import datetime, date
-from typing import Optional
+from typing import Any, Optional
 import uuid
 
 from sqlmodel import SQLModel, Field
@@ -142,6 +142,32 @@ class SolicitudActuacion(SQLModel, table=True):
     solicitud_id: str = Field(foreign_key="solicitudes.id", primary_key=True)
     actuacion_id: str = Field(foreign_key="actuaciones.id", primary_key=True)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Sprint C: AuditLog de cambios en solicitudes
+# ---------------------------------------------------------------------------
+
+class AuditLog(SQLModel, table=True):
+    """Registro de auditoria de cambios en solicitudes."""
+    __tablename__ = "audit_log"
+
+    id: str = Field(default_factory=_uuid, primary_key=True)
+    solicitud_id: str = Field(foreign_key="solicitudes.id", index=True)
+    usuario_id: Optional[str] = Field(default=None, foreign_key="usuarios.id")
+    accion: str  # create | update | delete | estado_change
+    campo: Optional[str] = Field(default=None)  # nombre del campo cambiado (None en create/delete)
+    valor_anterior: Optional[str] = Field(default=None)  # serializado a string
+    valor_nuevo: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+    # Suprimir advertencia de mypy sobre campo Any
+    class Config:
+        arbitrary_types_allowed = True
+
+
+# Referencia forward para type hints
+_AnyType = Any
 
 
 # ---------------------------------------------------------------------------
