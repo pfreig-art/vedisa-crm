@@ -18,7 +18,7 @@ import {
 
 const baseNavItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true, adminOnly: false },
-  { to: '/contacts', label: 'Contactos', icon: Users, adminOnly: false },
+  { to: '/solicitudes', label: 'Solicitudes', icon: Users, adminOnly: false },
   { to: '/pipeline', label: 'Pipeline', icon: Zap, adminOnly: false },
   { to: '/alertas', label: 'Alertas', icon: AlertCircle, adminOnly: true },
   { to: '/usuarios', label: 'Usuarios', icon: UserCog, adminOnly: true },
@@ -97,7 +97,7 @@ function ProtectedShell({ children }: { children: React.ReactNode }) {
         )}
 
         <div className="p-4 border-t border-gray-700 text-xs text-gray-500">
-          v0.2.0 &ndash; Sprint C
+          v0.3.0 &ndash; Sprint E
         </div>
       </aside>
 
@@ -153,13 +153,15 @@ export default function App() {
         }
       />
       <Route
-        path="/contacts"
+        path="/solicitudes"
         element={
           <RequireAuth>
             <Contacts />
           </RequireAuth>
         }
       />
+      {/* Compatibilidad con bookmarks antiguos: /contacts -> /solicitudes */}
+      <Route path="/contacts" element={<Navigate to="/solicitudes" replace />} />
       <Route
         path="/pipeline"
         element={

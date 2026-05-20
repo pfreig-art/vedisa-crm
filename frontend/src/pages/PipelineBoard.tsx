@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { crmApi, PipelineColumn, Solicitud } from '../api/crm'
+import { crmApi, PipelineColumn, Solicitud, Usuario } from '../api/crm'
 import { Clock3, Euro, GripVertical, RefreshCw } from 'lucide-react'
 import SolicitudSheet from '../components/SolicitudSheet'
+import { useUsuariosMap } from '../hooks/useCatalogs'
 
 const PRIORIDAD_DOT: Record<string, string> = {
   alta: 'bg-red-500',
@@ -54,12 +55,23 @@ function priorityDotClass(priority?: string | null) {
   return PRIORIDAD_DOT[priority ?? ''] ?? 'bg-gray-500'
 }
 
+function resolveComercial(
+  comercialId: string | null | undefined,
+  usuariosMap: Map<string, Usuario>,
+): string {
+  if (!comercialId) return '-'
+  const u = usuariosMap.get(comercialId)
+  return u?.nombre || comercialId
+}
+
 function SolicitudCard({
   s,
+  usuariosMap,
   onDragStart,
   onSelect,
 }: {
   s: Solicitud
+  usuariosMap: Map<string, Usuario>
   onDragStart: (solicitud: Solicitud) => void
   onSelect: (solicitud: Solicitud) => void
 }) {
@@ -115,7 +127,9 @@ function SolicitudCard({
 
         <div className="flex items-center justify-between text-xs">
           <span className="text-white/40">Comercial</span>
-          <span className="truncate pl-3 text-white/70">{s.comercial || '-'}</span>
+          <span className="truncate pl-3 text-white/70">
+            {resolveComercial(s.comercial, usuariosMap)}
+          </span>
         </div>
       </div>
     </div>
@@ -124,11 +138,13 @@ function SolicitudCard({
 
 function Column({
   col,
+  usuariosMap,
   onDropSolicitud,
   onDragStart,
   onSelect,
 }: {
   col: PipelineColumn
+  usuariosMap: Map<string, Usuario>
   onDropSolicitud: (estado: string) => void
   onDragStart: (solicitud: Solicitud) => void
   onSelect: (solicitud: Solicitud) => void
@@ -175,7 +191,13 @@ function Column({
 
       <div className="flex max-h-[calc(100vh-240px)] flex-col gap-3 overflow-y-auto p-3">
         {col.items.map((s) => (
-          <SolicitudCard key={s.id} s={s} onDragStart={onDragStart} onSelect={onSelect} />
+          <SolicitudCard
+            key={s.id}
+            s={s}
+            usuariosMap={usuariosMap}
+            onDragStart={onDragStart}
+            onSelect={onSelect}
+          />
         ))}
 
         {col.items.length === 0 && (
@@ -193,6 +215,7 @@ export default function PipelineBoard() {
   const [dragging, setDragging] = useState<Solicitud | null>(null)
   const [selected, setSelected] = useState<Solicitud | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
+  const { map: usuariosMap } = useUsuariosMap()
 
   const handleSelect = (s: Solicitud) => {
     setSelected(s)
@@ -299,6 +322,7 @@ export default function PipelineBoard() {
               onDropSolicitud={handleDrop}
               onDragStart={(s) => setDragging(s)}
               onSelect={handleSelect}
+              usuariosMap={usuariosMap}
             />
           ))}
         </div>

@@ -9,7 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.core.config import settings
 from app.core.database import create_db_and_tables
 from app.core.logging_middleware import request_logging_middleware
-from app.core.auth import get_current_user
+from app.core.auth import get_current_user, hash_password, verify_password
 from app.api.crm import router as crm_router
 from app.api.ai import router as ai_router
 from app.api.auth import router as auth_router
@@ -20,9 +20,21 @@ from app.api.meta import router as meta_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup / shutdown events."""
+    """Startup / shutdown events.
+
+    Warmup: precalentamos pool DB y bcrypt para que el primer login no
+    pague la latencia de inicializacion (que en NSSM cold-start puede
+    rondar los 7-8s). Esto convierte el primer login en ~250ms estables.
+    """
     app.state.started_at = datetime.now(timezone.utc)
     await create_db_and_tables()
+    # Warmup bcrypt: la primera llamada inicializa el backend nativo.
+    try:
+        warm_hash = hash_password("__warmup__")
+        verify_password("__warmup__", warm_hash)
+    except Exception:
+        # No bloqueamos el arranque si el warmup falla.
+        pass
     yield
 
 

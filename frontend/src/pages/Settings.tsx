@@ -308,15 +308,19 @@ export default function Settings() {
         <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-900 p-5 text-slate-100 shadow-sm dark:border-slate-800">
           <div className="mb-3 text-xs uppercase tracking-[0.14em] text-slate-400">Configuración del entorno</div>
           <div className="overflow-x-auto rounded-xl bg-slate-950/60 p-4 font-mono text-xs leading-6 text-slate-300">
-            <div>OPENAI_API_KEY=sk-...</div>
-            <div>ANTHROPIC_API_KEY=sk-ant-...</div>
-            <div>GEMINI_API_KEY=...</div>
-            <div>DEEPSEEK_API_KEY=...</div>
-            <div>OPENROUTER_API_KEY=sk-or-...</div>
-            <div>LITELLM_BASE_URL=http://localhost:4000</div>
-            <div>LITELLM_API_KEY=...</div>
-            <div>LLM_PRIMARY_PROVIDER=openai</div>
-            <div>LLM_FALLBACK_PROVIDER=anthropic</div>
+            {providerRows.length === 0 && (
+              <div className="text-slate-500">Sin datos de proveedores.</div>
+            )}
+            {providerRows.map((p) => (
+              <div key={`env-${p.name}`}>
+                {p.envHint || `${p.name.toUpperCase()}_API_KEY`}=
+                {p.isAvailable ? '••• (configurado)' : '(no configurado)'}
+              </div>
+            ))}
+            <div>
+              LLM_PRIMARY_PROVIDER=
+              {providerRows.find((p) => p.isDefault)?.name || '(no definido)'}
+            </div>
           </div>
         </div>
       </div>

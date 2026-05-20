@@ -25,12 +25,16 @@ export const useAIStore = create<AIStoreState>((set) => ({
   context: null,
 
   openDrawer: (payload) =>
-    set({
+    set((state) => ({
       isOpen: true,
       mode: payload?.mode ?? 'default',
       title: payload?.title ?? 'Asistente IA',
-      context: payload?.context ?? null,
-    }),
+      // Si el caller no aporta context en el payload, preservamos el que ya
+      // hubiera en el store (puede haberse seteado via setContext justo antes).
+      // Solo se resetea a null cuando explicitamente se pasa context=null.
+      context:
+        payload && 'context' in payload ? payload.context ?? null : state.context,
+    })),
 
   closeDrawer: () =>
     set({

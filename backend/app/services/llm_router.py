@@ -60,11 +60,34 @@ class LLMRouterService:
             log.warning("llm_no_providers_available", msg="Ninguna API key configurada. El chat IA no estara disponible.")
 
     def available_providers(self) -> list[dict]:
-        """Lista de proveedores con su estado de disponibilidad."""
-        return [
-            {"name": name, "available": p.is_available}
-            for name, p in self._providers.items()
-        ]
+        """Lista de proveedores con su estado de disponibilidad y rol.
+
+        Incluye:
+        - name: identificador interno (openai, anthropic, openrouter, ...)
+        - available / is_available: hay API key configurada y el provider esta listo
+        - is_default: True si es el LLM_PRIMARY_PROVIDER configurado
+        - is_fallback: True si es el LLM_FALLBACK_PROVIDER configurado
+        - model: modelo por defecto del provider
+        - base_url: endpoint del provider (cuando aplica)
+        """
+        primary = (settings.LLM_PRIMARY_PROVIDER or "").lower()
+        fallback = (settings.LLM_FALLBACK_PROVIDER or "").lower()
+        out: list[dict] = []
+        for name, p in self._providers.items():
+            lname = name.lower()
+            out.append(
+                {
+                    "name": name,
+                    "available": p.is_available,
+                    "is_available": p.is_available,
+                    "is_default": lname == primary,
+                    "is_fallback": lname == fallback,
+                    "model": getattr(p, "model", "") or "",
+                    "base_url": getattr(p, "base_url", "") or "",
+                    "enabled": True,
+                }
+            )
+        return out
 
     def _get_provider(self, name: str) -> LLMProvider | None:
         p = self._providers.get(name)
